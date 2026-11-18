@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Suspense, lazy, useEffect, useState } from 'react'
 import Layout from './components/layout/Layout'
 import ToastContainer, { toast } from './components/ui/Toast'
@@ -122,6 +122,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  const location = useLocation()
   const { isLoading, loadingText } = useLoadingStore()
   const { isAuthenticated, fetchUser } = useAuthStore()
   const {
@@ -145,7 +146,7 @@ function App() {
         setAuthCheckDone(true)
         return
       }
-      if (isPublicAuthPath(window.location.pathname)) {
+      if (isPublicAuthPath(location.pathname)) {
         setAuthCheckDone(true)
         return
       }
@@ -168,7 +169,7 @@ function App() {
     }
     
     checkAuth()
-  }, [accessAuthenticated, accessCheckDone]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accessAuthenticated, accessCheckDone, location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
   
   // 全局toast事件监听器（用于Axios 501等全局错误）
   useEffect(() => {
@@ -195,7 +196,7 @@ function App() {
     return <Loading fullScreen text="加载中..." size="lg" />
   }
 
-  if (!accessAuthenticated && window.location.pathname !== '/access') {
+  if (!accessAuthenticated && location.pathname !== '/access') {
     return <Navigate to="/access" replace />
   }
   
