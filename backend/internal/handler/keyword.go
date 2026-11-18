@@ -3,6 +3,8 @@ package handler
 import (
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/CriarBrand/qianchuan-backend/internal/middleware"
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
@@ -91,7 +93,18 @@ func (h *KeywordHandler) GetRecommendKeywords(c *gin.Context) {
 		Count      int64    `json:"count"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if c.Request.Method == http.MethodGet {
+		adID, _ := strconv.ParseInt(c.Query("ad_id"), 10, 64)
+		req.AdId = adID
+		req.QueryWords = strings.Split(strings.TrimSpace(c.Query("query_words")), ",")
+		if len(req.QueryWords) == 1 && req.QueryWords[0] == "" {
+			req.QueryWords = nil
+		}
+		cursor, _ := strconv.ParseInt(c.Query("cursor"), 10, 64)
+		count, _ := strconv.ParseInt(c.Query("count"), 10, 64)
+		req.Cursor = cursor
+		req.Count = count
+	} else if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "参数错误: " + err.Error(),

@@ -40,8 +40,8 @@ node_modules/
 *.so
 *.dylib
 bin/
-server
-main
+/server
+/main
 
 # Test coverage
 coverage/

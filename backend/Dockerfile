@@ -1,29 +1,27 @@
 # 多阶段构建 - 减小最终镜像大小
 # 此 Dockerfile 需要从项目根目录构建，而不是 backend 目录
 # docker build -f backend/Dockerfile -t qianchuan-backend .
-FROM golang:1.20-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # 设置工作目录
-WORKDIR /app
+WORKDIR /src
 
 # 安装必要的依赖
 RUN apk add --no-cache ca-certificates git curl
 
 # 复制 oceanengineSDK 到指定位置
-COPY oceanengineSDK /app/oceanengineSDK
+COPY oceanengineSDK /src/oceanengineSDK
 
-# 复制 backend 的 go mod 文件
-COPY backend/go.mod backend/go.sum ./
+# 复制 backend 源码，保持 ../oceanengineSDK 的本地 replace 路径成立
+COPY backend /src/backend
+WORKDIR /src/backend
 
 # 下载依赖
 ENV GOPROXY=https://goproxy.cn,direct
 RUN go mod download
 
-# 复制 backend 源代码
-COPY backend/ .
-
 # 构建应用
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o qianchuan-server ./cmd/server/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /out/qianchuan-server ./cmd/server
 
 # 使用更小的 alpine 镜像作为基础镜像
 FROM alpine:latest
@@ -39,7 +37,7 @@ RUN addgroup -g 1001 -S appgroup && \
 WORKDIR /app
 
 # 从 builder 阶段复制二进制文件
-COPY --from=builder /app/qianchuan-server .
+COPY --from=builder /out/qianchuan-server .
 
 # 注意：.env 通过 docker-compose volumes 挂载，不在 Dockerfile 中复制
 # 这样可以在不重建镜像的情况下更新配置
