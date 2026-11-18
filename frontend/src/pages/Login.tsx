@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Zap, Shield } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
+import { createOAuthState } from '@/utils/oauthState'
 
 export default function Login() {
   const [isVisible, setIsVisible] = useState(false)
@@ -27,10 +28,7 @@ export default function Login() {
       return
     }
 
-    const state = Math.random().toString(36).substring(7)
-
-    // 存储state用于回调验证
-    sessionStorage.setItem('oauth_state', state)
+    const state = createOAuthState()
     console.log('✅ [Login] State saved:', state)
 
     // 跳转到千川OAuth授权页

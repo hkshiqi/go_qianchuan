@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { exchangeOAuthCode } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
+import { clearOAuthState, readOAuthState } from '@/utils/oauthState'
 
 export default function AuthCallback() {
   const navigate = useNavigate()
@@ -17,7 +18,7 @@ export default function AuthCallback() {
       // 兼容千川的 auth_code 参数名（千川回调使用 auth_code 而不是 code）
       const code = params.get('code') || params.get('auth_code')
       const state = params.get('state')
-      const savedState = sessionStorage.getItem('oauth_state')
+      const { state: savedState, expired: stateExpired } = readOAuthState()
 
       console.log('🔵 [AuthCallback] URL params:', {
         code: code ? `${code.substring(0, 20)}...` : 'null',
@@ -39,7 +40,7 @@ export default function AuthCallback() {
       const isDev = import.meta.env.DEV
       const skipStateValidation = isDev && import.meta.env.VITE_SKIP_STATE_VALIDATION === 'true'
       
-      if (state !== savedState) {
+      if (!savedState || stateExpired || state !== savedState) {
         console.warn('⚠️ State验证失败:', {
           received: state,
           expected: savedState,
@@ -50,8 +51,12 @@ export default function AuthCallback() {
         if (!skipStateValidation) {
           // 生产环境或未配置跳过时，强制阻断
           setError('授权验证失败')
-          setErrorDetails('State参数不匹配，可能存在CSRF攻击风险。请从登录页面重新授权。')
-          sessionStorage.removeItem('oauth_state')
+          setErrorDetails(
+            stateExpired
+              ? '授权请求已超过 10 分钟，请从登录页面重新授权。'
+              : 'State参数不匹配，可能存在CSRF攻击风险。请从登录页面重新授权。',
+          )
+          clearOAuthState()
           setTimeout(() => navigate('/login'), 3000)
           return
         }
@@ -70,7 +75,7 @@ export default function AuthCallback() {
         console.log('✅ Step 1 Success: OAuth code exchanged', exchangeResult)
 
         // 清除保存的state
-        sessionStorage.removeItem('oauth_state')
+        clearOAuthState()
 
         // Step 2: Fetch user info
         setStep('正在获取用户信息...')
