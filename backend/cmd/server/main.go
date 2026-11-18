@@ -20,7 +20,7 @@ import (
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
 	"github.com/CriarBrand/qianchuan-backend/internal/util"
 	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-contrib/sessions/memstore"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
@@ -38,6 +38,9 @@ func main() {
 	appSecret := envString("APP_SECRET", "")
 	if appSecret == "" {
 		log.Fatal("APP_SECRET is required")
+	}
+	if envString("APP_ACCESS_USERNAME", "") == "" || len(envString("APP_ACCESS_PASSWORD_SHA256", "")) != 64 {
+		log.Fatal("APP_ACCESS_USERNAME and a 64-character APP_ACCESS_PASSWORD_SHA256 are required")
 	}
 
 	gin.SetMode(envString("GIN_MODE", gin.ReleaseMode))
@@ -75,6 +78,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	qianchuanService := service.NewQianchuanService(client, appID, appSecret)
 
 	authHandler := handler.NewAuthHandler(qianchuanService)
+	accessHandler := handler.NewAccessHandler()
 	advertiserHandler := handler.NewAdvertiserHandler(qianchuanService)
 	campaignHandler := handler.NewCampaignHandler(qianchuanService)
 	adHandler := handler.NewAdHandler(qianchuanService)
@@ -100,7 +104,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 		secret = sum[:]
 	}
 	encryptionKey := sha256.Sum256(append(append([]byte{}, secret...), []byte("qianchuan-session-encryption")...))
-	store := cookie.NewStore(secret, encryptionKey[:])
+	store := memstore.NewStore(secret, encryptionKey[:])
 	store.Options(sessionOptions())
 	router.Use(sessions.Sessions(envString("SESSION_NAME", "qianchuan_session"), store))
 
@@ -123,11 +127,14 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	api := router.Group("/api")
-	api.POST("/oauth/exchange", authHandler.OAuthExchange)
-	api.POST("/auth/refresh", authHandler.RefreshSession)
+	api.GET("/access/status", accessHandler.Status)
+	api.POST("/access/login", accessHandler.Login)
+	api.POST("/access/logout", accessHandler.Logout)
+	api.POST("/oauth/exchange", middleware.AccessRequired(), authHandler.OAuthExchange)
+	api.POST("/auth/refresh", middleware.AccessRequired(), authHandler.RefreshSession)
 
 	protected := api.Group("")
-	protected.Use(middleware.AuthRequired(), middleware.AutoRefreshToken(qianchuanService), middleware.CSRFProtection())
+	protected.Use(middleware.AccessRequired(), middleware.AuthRequired(), middleware.AutoRefreshToken(qianchuanService), middleware.CSRFProtection())
 
 	protected.GET("/user/info", authHandler.GetUserInfo)
 	protected.POST("/auth/logout", authHandler.Logout)

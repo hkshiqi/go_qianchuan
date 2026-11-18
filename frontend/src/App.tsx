@@ -5,11 +5,13 @@ import ToastContainer, { toast } from './components/ui/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
 import Loading from './components/ui/Loading'
 import { useAuthStore } from './store/authStore'
+import { useAccessStore } from './store/accessStore'
 import { useLoadingStore } from './store/loadingStore'
 import { isPublicAuthPath } from './utils/authRoute'
 
 // 懒加载页面组件
 const Login = lazy(() => import('./pages/Login'))
+const AccessLogin = lazy(() => import('./pages/AccessLogin'))
 const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Advertisers = lazy(() => import('./pages/Advertisers'))
@@ -106,6 +108,11 @@ const LoadingScreen = () => <Loading fullScreen text="加载中..." size="lg" />
 // 受保护路由包装器
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
+  const { authenticated: accessAuthenticated } = useAccessStore()
+
+  if (!accessAuthenticated) {
+    return <Navigate to="/access" replace />
+  }
   
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
@@ -117,11 +124,27 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function App() {
   const { isLoading, loadingText } = useLoadingStore()
   const { isAuthenticated, fetchUser } = useAuthStore()
+  const {
+    authenticated: accessAuthenticated,
+    checked: accessCheckDone,
+    checkStatus: checkAccessStatus,
+  } = useAccessStore()
   const [authCheckDone, setAuthCheckDone] = useState(false)
+
+  useEffect(() => {
+    checkAccessStatus()
+  }, [checkAccessStatus])
   
   // 冷启动鉴权检查：刷新页面时尝试恢复登录状态
   useEffect(() => {
     const checkAuth = async () => {
+      if (!accessCheckDone) {
+        return
+      }
+      if (!accessAuthenticated) {
+        setAuthCheckDone(true)
+        return
+      }
       if (isPublicAuthPath(window.location.pathname)) {
         setAuthCheckDone(true)
         return
@@ -145,7 +168,7 @@ function App() {
     }
     
     checkAuth()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accessAuthenticated, accessCheckDone]) // eslint-disable-line react-hooks/exhaustive-deps
   
   // 全局toast事件监听器（用于Axios 501等全局错误）
   useEffect(() => {
@@ -168,8 +191,12 @@ function App() {
   }, [])
   
   // 鉴权检查未完成时，显示 loading
-  if (!authCheckDone) {
+  if (!accessCheckDone || !authCheckDone) {
     return <Loading fullScreen text="加载中..." size="lg" />
+  }
+
+  if (!accessAuthenticated && window.location.pathname !== '/access') {
+    return <Navigate to="/access" replace />
   }
   
   return (
@@ -179,6 +206,7 @@ function App() {
       
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
+          <Route path="/access" element={<AccessLogin />} />
           {/* 公开路由 */}
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
