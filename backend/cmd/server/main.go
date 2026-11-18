@@ -107,7 +107,9 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "timestamp": time.Now().Unix()}) })
 	router.GET("/healthz", middleware.HealthCheckHandler)
 	router.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
-	router.GET("/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-sdk-platform"}) })
+	router.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-sdk-platform"})
+	})
 	router.GET("/metrics", middleware.ExportMetricsHandler)
 	router.Any("/webhook/callback", func(c *gin.Context) {
 		if c.Request.Method == http.MethodGet {

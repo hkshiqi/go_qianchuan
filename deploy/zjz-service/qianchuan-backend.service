@@ -1,0 +1,17 @@
+[Unit]
+Description=Qianchuan SDK Platform Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/go-qianchuan/backend
+EnvironmentFile=/opt/go-qianchuan/backend/.env
+ExecStart=/bin/sh -c 'PORT=18081 exec /opt/go-qianchuan/backend/bin/qianchuan-server'
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
