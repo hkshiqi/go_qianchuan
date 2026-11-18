@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Loading from './components/ui/Loading'
 import { useAuthStore } from './store/authStore'
 import { useLoadingStore } from './store/loadingStore'
+import { isPublicAuthPath } from './utils/authRoute'
 
 // 懒加载页面组件
 const Login = lazy(() => import('./pages/Login'))
@@ -121,6 +122,11 @@ function App() {
   // 冷启动鉴权检查：刷新页面时尝试恢复登录状态
   useEffect(() => {
     const checkAuth = async () => {
+      if (isPublicAuthPath(window.location.pathname)) {
+        setAuthCheckDone(true)
+        return
+      }
+
       // 如果已经认证，直接跳过
       if (isAuthenticated) {
         setAuthCheckDone(true)

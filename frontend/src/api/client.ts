@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'ax
 import { API_CONFIG } from '../constants/config'
 import { logger } from '../utils/logger'
 import { captureException, addBreadcrumb } from '../config/sentry'
+import { isPublicAuthPath } from '../utils/authRoute'
 
 // API响应统一格式
 export interface ApiResponse<T = unknown> {
@@ -128,7 +129,7 @@ apiClient.interceptors.response.use(
       switch (status) {
         case 401:
           // 尝试刷新token（仅对非登录页面）
-          if (!window.location.pathname.includes('/login') && config && !config._skipAuthRefresh) {
+          if (!isPublicAuthPath(window.location.pathname) && config && !config._skipAuthRefresh) {
             try {
               await handleTokenRefresh(config, error)
             } catch (refreshError) {
@@ -136,7 +137,7 @@ apiClient.interceptors.response.use(
               logger.error('Token refresh failed, redirecting to login', refreshError)
               window.location.href = '/login'
             }
-          } else if (!window.location.pathname.includes('/login')) {
+          } else if (!isPublicAuthPath(window.location.pathname)) {
             window.location.href = '/login'
           }
           break
