@@ -1,15 +1,35 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { ArrowRight, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAccessStore } from '@/store/accessStore'
+import { useAuthStore } from '@/store/authStore'
 
 export default function AccessLogin() {
   const navigate = useNavigate()
   const login = useAccessStore((state) => state.login)
+  const accessAuthenticated = useAccessStore((state) => state.authenticated)
+  const fetchUser = useAuthStore((state) => state.fetchUser)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!accessAuthenticated) return
+
+    let active = true
+    fetchUser()
+      .then(() => {
+        if (active) navigate('/dashboard', { replace: true })
+      })
+      .catch(() => {
+        if (active) navigate('/login', { replace: true })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [accessAuthenticated, fetchUser, navigate])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -17,7 +37,6 @@ export default function AccessLogin() {
     setSubmitting(true)
     try {
       await login(username.trim(), password)
-      navigate('/login', { replace: true })
     } catch (err) {
       const message = err instanceof Error ? err.message : '登录失败，请重试'
       setError(message)

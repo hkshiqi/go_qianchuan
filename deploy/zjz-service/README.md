@@ -6,6 +6,7 @@
 - Nginx：监听宿主机 `8080`，静态站点为 `/opt/go-qianchuan/frontend/dist`
 - Go 后端：systemd `qianchuan-backend.service`，监听 `127.0.0.1:18081`
 - 访问控制：`/access` 页面使用 `APP_ACCESS_USERNAME` 和 `APP_ACCESS_PASSWORD_SHA256`，Session 保存在服务端内存
+- OAuth 回调需要跨站携带访问 Session，因此生产环境使用 `COOKIE_SECURE=true`、`COOKIE_SAME_SITE=none`
 - Nginx 将 `/api/`、`/health`、`/ready`、`/metrics` 和 `/swagger/` 转发到 Go 后端
 - 旧 `qc-workbench.service` 保留在 `/opt/qc-live-workbench`，切换后已停止并禁用开机自启
 

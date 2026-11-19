@@ -1,3 +1,3 @@
 export function isPublicAuthPath(pathname: string): boolean {
-  return pathname === '/login' || pathname === '/auth/callback'
+  return pathname === '/access' || pathname === '/login' || pathname === '/auth/callback'
 }
