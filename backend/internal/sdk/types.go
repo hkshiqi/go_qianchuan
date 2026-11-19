@@ -1,5 +1,7 @@
 package sdk
 
+import "strconv"
+
 // ===========================
 // 项目内部 DTO 类型定义
 // 与底层 SDK 解耦，便于切换 SDK 实现
@@ -1047,6 +1049,8 @@ type LiveGetReq struct {
 	AccessToken  string   `json:"access_token"`
 	AdvertiserId int64    `json:"advertiser_id"`
 	AwemeId      int64    `json:"aweme_id"`
+	StartTime    string   `json:"start_time"`
+	EndTime      string   `json:"end_time"`
 	Fields       []string `json:"fields,omitempty"`
 }
 
@@ -1600,7 +1604,7 @@ type UniPromotionMaterialGetRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		Materials []UniPromotionMaterialInfo `json:"materials"`
+		Materials []UniPromotionMaterialInfo `json:"ad_material_infos"`
 		PageInfo  PageInfo                   `json:"page_info"`
 	} `json:"data"`
 }
@@ -1685,6 +1689,7 @@ type UniPromotionAuthorizedGetRes struct {
 type UniPromotionAweme struct {
 	AwemeId     uint64 `json:"aweme_id"`
 	AwemeName   string `json:"aweme_name"`
+	AwemeShowId string `json:"aweme_show_id"`
 	AwemeAvatar string `json:"aweme_avatar"`
 }
 
@@ -1697,6 +1702,122 @@ type UniPromotionAuthInitReq struct {
 type UniPromotionAuthInitRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
+}
+
+type UniPromotionReportConfigReq struct {
+	AccessToken  string   `json:"-"`
+	AdvertiserId uint64   `json:"advertiser_id"`
+	DataTopics   []string `json:"data_topics"`
+	DataPeriod   string   `json:"data_period,omitempty"`
+}
+
+type UniPromotionReportConfigRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		CustomConfigDatas []UniPromotionReportTopicConfig `json:"custom_config_datas"`
+	} `json:"data"`
+}
+
+type UniPromotionReportTopicConfig struct {
+	DataTopic  string                        `json:"data_topic"`
+	Dimensions []UniPromotionReportDimension `json:"dimensions"`
+	Metrics    []UniPromotionReportMetric    `json:"metrics"`
+	QueryLimit UniPromotionReportQueryLimit  `json:"query_limit"`
+}
+
+func (c UniPromotionReportTopicConfig) MaxDimensionLimit() int {
+	limit, err := strconv.Atoi(c.QueryLimit.MaxDimensionLimit)
+	if err != nil || limit <= 0 {
+		return 0
+	}
+	return limit
+}
+
+type UniPromotionReportDimension struct {
+	Field           string                          `json:"field"`
+	Name            string                          `json:"name"`
+	Description     string                          `json:"description"`
+	Sortable        bool                            `json:"sortable"`
+	Filterable      bool                            `json:"filterable"`
+	FilterOnly      bool                            `json:"filter_only"`
+	FilterConfig    *UniPromotionReportFilterConfig `json:"filter_config,omitempty"`
+	ExclusionDims   []string                        `json:"exclusion_dims"`
+	ExclusionMetric []string                        `json:"exclusion_metrics"`
+	IsRequired      bool                            `json:"is_required"`
+}
+
+type UniPromotionReportFilterConfig struct {
+	Type           int64                                `json:"type"`
+	Operator       int64                                `json:"operator"`
+	ValueLimit     int64                                `json:"value_limit"`
+	FilterRequired bool                                 `json:"filter_required"`
+	RangeValues    []UniPromotionReportFilterRangeValue `json:"range_values"`
+}
+
+type UniPromotionReportFilterRangeValue struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type UniPromotionReportMetric struct {
+	Field           string   `json:"field"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Sortable        bool     `json:"sortable"`
+	Unit            int64    `json:"unit"`
+	ExclusionDims   []string `json:"exclusion_dims"`
+	ExclusionMetric []string `json:"exclusion_metrics"`
+}
+
+type UniPromotionReportQueryLimit struct {
+	MaxDimensionLimit string `json:"max_dimension_limit"`
+	MaxDay            string `json:"max_day"`
+	EarliestDay       string `json:"earliest_day"`
+	MaxDayByDay       string `json:"max_day_by_day"`
+	MaxDayByHour      string `json:"max_day_by_hour"`
+}
+
+type UniPromotionReportDataReq struct {
+	AccessToken  string                     `json:"-"`
+	AdvertiserId uint64                     `json:"advertiser_id"`
+	DataTopic    string                     `json:"data_topic"`
+	DataPeriod   string                     `json:"data_period,omitempty"`
+	Dimensions   []string                   `json:"dimensions"`
+	Metrics      []string                   `json:"metrics"`
+	Filters      []UniPromotionReportFilter `json:"filters"`
+	StartTime    string                     `json:"start_time"`
+	EndTime      string                     `json:"end_time"`
+	OrderBy      []UniPromotionReportOrder  `json:"order_by"`
+	Page         int                        `json:"page,omitempty"`
+	PageSize     int                        `json:"page_size,omitempty"`
+}
+
+type UniPromotionReportFilter struct {
+	Field    string   `json:"field"`
+	Operator int64    `json:"operator"`
+	Values   []string `json:"values"`
+}
+
+type UniPromotionReportOrder struct {
+	Type  int64  `json:"type"`
+	Field string `json:"field"`
+}
+
+type UniPromotionReportDataRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		Rows     []UniPromotionReportRow `json:"rows"`
+		PageInfo PageInfo                `json:"page_info"`
+	} `json:"data"`
+}
+
+type UniPromotionReportRow struct {
+	Dimensions map[string]any `json:"dimensions"`
+	Metrics    map[string]any `json:"metrics"`
 }
 
 // ===== Common Types =====

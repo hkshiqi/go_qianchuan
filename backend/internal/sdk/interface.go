@@ -11,7 +11,6 @@ import (
 // 1. 所有方法第一个参数为 context.Context，支持超时控制和链路追踪
 // 2. 错误处理统一：返回包装后的 QianchuanError，保留原始 code/message
 // 3. 所有 Req/Res 类型在 types.go 中独立定义，解耦 SDK
-//
 type QianchuanClient interface {
 	// ===== Auth & Session =====
 	OauthAccessToken(ctx context.Context, req OauthAccessTokenReq) (*OauthAccessTokenRes, error)
@@ -112,6 +111,8 @@ type QianchuanClient interface {
 
 	// ===== UniPromotion (全域推广) =====
 	UniPromotionList(ctx context.Context, req UniPromotionListReq) (*UniPromotionListRes, error)
+	UniPromotionReportConfig(ctx context.Context, req UniPromotionReportConfigReq) (*UniPromotionReportConfigRes, error)
+	UniPromotionReportData(ctx context.Context, req UniPromotionReportDataReq) (*UniPromotionReportDataRes, error)
 	UniPromotionDetail(ctx context.Context, req UniPromotionDetailReq) (*UniPromotionDetailRes, error)
 	UniPromotionCreate(ctx context.Context, req UniPromotionCreateReq) (*UniPromotionCreateRes, error)
 	UniPromotionUpdate(ctx context.Context, req UniPromotionUpdateReq) (*UniPromotionUpdateRes, error)

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -245,7 +246,7 @@ func (t *Tools) listPlans(ctx context.Context, args map[string]any) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
+	now := time.Now().In(shanghaiLocation)
 	startTime := stringArg(args, "start_time", now.Add(-24*time.Hour).Format("2006-01-02 15:04:05"))
 	endTime := stringArg(args, "end_time", now.Format("2006-01-02 15:04:05"))
 	page := positiveIntArg(args, "page", 1)
@@ -357,41 +358,108 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 	startDate := stringArg(args, "start_date", today())
 	endDate := stringArg(args, "end_date", startDate)
 	page := positiveIntArg(args, "page", 1)
-	pageSize := clampInt(positiveIntArg(args, "page_size", 100), 1, 200)
-	response, err := t.service.Client.ReportMaterialGet(ctx, sdk.ReportMaterialGetReq{
-		AccessToken:  token,
-		AdvertiserId: advertiserID,
-		StartDate:    startDate,
-		EndDate:      endDate,
-		Fields: []string{
-			"stat_cost",
-			"show_cnt",
-			"click_cnt",
-			"ctr",
-			"convert_cnt",
-			"conversion_rate",
-			"total_pay_order_gmv_for_roi2",
-			"total_pay_order_count_for_roi2",
-			"total_prepay_and_pay_order_roi2",
+	pageSize := reportPageSize(positiveIntArg(args, "page_size", 100))
+	const dataTopic = "SITE_PROMOTION_POST_DATA_VIDEO"
+	configResponse, err := t.service.Client.UniPromotionReportConfig(
+		ctx,
+		sdk.UniPromotionReportConfigReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			DataTopics:   []string{dataTopic},
 		},
-		Page:       int64(page),
-		PageSize:   int64(pageSize),
-		OrderField: "stat_cost",
-		OrderType:  "DESC",
-	})
+	)
+	if err != nil {
+		return nil, fmt.Errorf("获取素材报表配置失败: %w", err)
+	}
+	if configResponse.Code != 0 {
+		return nil, apiError(
+			"获取素材报表配置失败",
+			configResponse.Code,
+			configResponse.Message,
+			configResponse.RequestID,
+		)
+	}
+	var topicConfig *sdk.UniPromotionReportTopicConfig
+	for index := range configResponse.Data.CustomConfigDatas {
+		if configResponse.Data.CustomConfigDatas[index].DataTopic == dataTopic {
+			topicConfig = &configResponse.Data.CustomConfigDatas[index]
+			break
+		}
+	}
+	if topicConfig == nil {
+		return nil, fmt.Errorf("官方报表配置未返回 %s", dataTopic)
+	}
+	dimensionFields := reportDimensionFields(*topicConfig)
+	metricFields := reportMetricFields(*topicConfig)
+	if len(dimensionFields) == 0 || len(metricFields) == 0 {
+		return nil, fmt.Errorf("官方报表配置缺少素材维度或指标")
+	}
+	if expected := topicConfig.MaxDimensionLimit(); expected > 0 && len(dimensionFields) > expected {
+		return nil, fmt.Errorf("素材报表维度 %d 个，超过官方上限 %d 个", len(dimensionFields), expected)
+	}
+	anchorID, err := t.resolveReportAnchorID(ctx, token, advertiserID, account)
+	if err != nil {
+		return nil, err
+	}
+	filters, err := reportFilters(*topicConfig, startDate, endDate, account, anchorID)
+	if err != nil {
+		return nil, err
+	}
+	orderField := reportCostMetric(metricFields)
+	response, err := t.service.Client.UniPromotionReportData(
+		ctx,
+		sdk.UniPromotionReportDataReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			DataTopic:    dataTopic,
+			Dimensions:   dimensionFields,
+			Metrics:      metricFields,
+			Filters:      filters,
+			StartTime:    startDate + " 00:00:00",
+			EndTime:      endDate + " 23:59:59",
+			OrderBy:      []sdk.UniPromotionReportOrder{{Type: 2, Field: orderField}},
+			Page:         page,
+			PageSize:     pageSize,
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("获取素材报表失败: %w", err)
 	}
 	if response.Code != 0 {
-		return nil, apiError("获取素材报表失败", response.Code, response.Message)
+		return nil, apiError(
+			"获取素材报表失败",
+			response.Code,
+			response.Message,
+			response.RequestID,
+		)
+	}
+	materials := make([]MaterialMetrics, 0, len(response.Data.Rows))
+	for index, row := range response.Data.Rows {
+		materials = append(materials, materialFromReportRow(row, index+1))
+	}
+	sort.SliceStable(materials, func(i, j int) bool {
+		if materials[i].Cost == materials[j].Cost {
+			return materials[i].MaterialID > materials[j].MaterialID
+		}
+		return materials[i].Cost > materials[j].Cost
+	})
+	for index := range materials {
+		materials[index].CostRank = index + 1
+		materials[index].ProtectedTop3 = index < DefaultRuleConfig().ProtectedTopN
+		materials[index].EligibleReplace = !materials[index].ProtectedTop3
 	}
 	return map[string]any{
-		"account":     t.account(account),
-		"window":      map[string]string{"start_date": startDate, "end_date": endDate},
-		"page_info":   response.Data.PageInfo,
-		"materials":   response.Data.List,
-		"source":      "qianchuan report material",
-		"write_guard": "素材库只读；本工具不会上传或创建素材",
+		"account":        t.account(account),
+		"window":         map[string]string{"start_date": startDate, "end_date": endDate},
+		"page_info":      response.Data.PageInfo,
+		"materials":      materials,
+		"protected_top3": protectedTop3(materials),
+		"data_topic":     dataTopic,
+		"anchor_id":      formatUintID(anchorID),
+		"dimensions":     dimensionFields,
+		"metrics":        metricFields,
+		"source":         "qianchuan report uni_promotion data",
+		"write_guard":    "素材库只读；本工具不会上传或创建素材",
 	}, nil
 }
 
@@ -404,17 +472,21 @@ func (t *Tools) liveOverview(ctx context.Context, args map[string]any) (any, err
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().In(shanghaiLocation)
+	startTime, endTime := businessDayRange(now)
 	response, err := t.service.Client.LiveGet(ctx, sdk.LiveGetReq{
 		AccessToken:  token,
 		AdvertiserId: advertiserID,
 		AwemeId:      account.AwemeID,
+		StartTime:    startTime,
+		EndTime:      endTime,
 		Fields: []string{
 			"stat_cost",
 			"click_cnt",
 			"ctr",
 			"convert_cnt",
 			"convert_rate",
-			"today_live_pay_order_gpm",
+			"total_live_pay_order_gpm",
 			"luban_live_pay_order_gpm",
 			"live_pay_order_gmv_alias",
 			"luban_live_pay_order_gmv",
@@ -433,8 +505,9 @@ func (t *Tools) liveOverview(ctx context.Context, args map[string]any) (any, err
 		"account":      t.account(account),
 		"aweme_id":     formatID(account.AwemeID),
 		"live_room_id": formatID(account.LiveRoomID),
+		"window":       map[string]string{"start_time": startTime, "end_time": endTime},
 		"live":         response.Data,
-		"refreshed_at": time.Now().Format(time.RFC3339),
+		"refreshed_at": now.Format(time.RFC3339),
 	}, nil
 }
 
@@ -687,6 +760,64 @@ func (t *Tools) tokenFor(ctx context.Context, account tenantstore.AccountBinding
 	return t.service.AccessTokenFor(ctx, account.AdvertiserID)
 }
 
+func (t *Tools) resolveReportAnchorID(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	account tenantstore.AccountBinding,
+) (uint64, error) {
+	const pageSize = 100
+	var all []sdk.UniPromotionAweme
+	for page := 1; page <= 100; page++ {
+		response, err := t.service.Client.UniPromotionAuthorizedGet(
+			ctx,
+			sdk.UniPromotionAuthorizedGetReq{
+				AccessToken:  token,
+				AdvertiserId: uint64(advertiserID),
+				Page:         page,
+				PageSize:     pageSize,
+			},
+		)
+		if err != nil {
+			return 0, fmt.Errorf("获取官方报表可用抖音号失败: %w", err)
+		}
+		if response.Code != 0 {
+			return 0, apiError(
+				"获取官方报表可用抖音号失败",
+				response.Code,
+				response.Message,
+			)
+		}
+		all = append(all, response.Data.List...)
+		if len(response.Data.List) < pageSize ||
+			(response.Data.PageInfo.TotalPage > 0 && page >= response.Data.PageInfo.TotalPage) {
+			break
+		}
+	}
+	return selectReportAnchorID(all, account.AwemeID)
+}
+
+func selectReportAnchorID(list []sdk.UniPromotionAweme, bindingID int64) (uint64, error) {
+	binding := strings.TrimSpace(formatID(bindingID))
+	for _, item := range list {
+		if item.AwemeId == 0 {
+			continue
+		}
+		if strings.TrimSpace(formatUintID(item.AwemeId)) == binding ||
+			strings.TrimSpace(item.AwemeShowId) == binding {
+			return item.AwemeId, nil
+		}
+	}
+	if len(list) == 1 && list[0].AwemeId > 0 {
+		return list[0].AwemeId, nil
+	}
+	if len(list) == 0 {
+		return 0, fmt.Errorf("账户 %s 没有可用于官方素材报表的抖音号", formatID(bindingID))
+	}
+	return 0, fmt.Errorf("账户 %s 绑定的抖音号未出现在官方全域授权列表，共 %d 个可用抖音号",
+		formatID(bindingID), len(list))
+}
+
 func (t *Tools) account(account tenantstore.AccountBinding) map[string]string {
 	return map[string]string{
 		"account_id":    formatID(account.AdvertiserID),
@@ -776,13 +907,361 @@ func normalizeMaterial(raw sdk.UniPromotionMaterialInfo, rank int) MaterialMetri
 		CTR:             raw.Ctr,
 		ConvertCount:    raw.ConvertCnt,
 		ConversionRate:  raw.ConversionRate,
-		PayOrderCount:   raw.PayOrderAmount,
+		PayOrderCount:   float64(raw.ConvertCnt),
 		PayOrderGMV:     raw.PayOrderAmount,
 		ROI:             raw.Roi2,
 		GPM:             raw.Gpm,
 		CostRank:        rank,
 		ProtectedTop3:   rank <= 3,
 		EligibleReplace: rank > 3,
+	}
+}
+
+func reportDimensionFields(config sdk.UniPromotionReportTopicConfig) []string {
+	preferred := []string{
+		"material_id",
+		"roi2_material_video_name",
+		"material_name",
+		"video_id",
+		"roi2_material_status",
+		"material_status",
+		"roi2_material_show_status",
+		"roi2_material_show_status_reason",
+		"roi2_material_video_type",
+	}
+	available := make(map[string]sdk.UniPromotionReportDimension, len(config.Dimensions))
+	for _, dimension := range config.Dimensions {
+		if dimension.Field == "" || dimension.FilterOnly {
+			continue
+		}
+		available[dimension.Field] = dimension
+	}
+	fields := make([]string, 0, len(preferred))
+	for _, field := range preferred {
+		if _, ok := available[field]; ok && !containsString(fields, field) {
+			fields = append(fields, field)
+		}
+	}
+	for _, dimension := range config.Dimensions {
+		if dimension.Field == "" || dimension.FilterOnly || !dimension.IsRequired {
+			continue
+		}
+		if !containsString(fields, dimension.Field) {
+			fields = append(fields, dimension.Field)
+		}
+	}
+	limit := config.MaxDimensionLimit()
+	if limit > 0 && len(fields) > limit {
+		fields = fields[:limit]
+	}
+	return fields
+}
+
+func reportMetricFields(config sdk.UniPromotionReportTopicConfig) []string {
+	preferred := []string{
+		"stat_cost_for_roi2",
+		"stat_cost",
+		"live_show_count_for_roi2_v2",
+		"live_show_count_for_roi2",
+		"live_watch_count_for_roi2_v2",
+		"live_watch_count_for_roi2",
+		"live_cvr_rate_for_roi2_v2",
+		"live_convert_rate_for_roi2_v2",
+		"total_pay_order_count_for_roi2",
+		"total_pay_order_gmv_include_coupon_for_roi2",
+		"total_pay_order_gmv_for_roi2",
+		"total_prepay_and_pay_order_roi2",
+		"total_ecpm_for_roi2",
+	}
+	available := make(map[string]sdk.UniPromotionReportMetric, len(config.Metrics))
+	for _, metric := range config.Metrics {
+		if metric.Field != "" {
+			available[metric.Field] = metric
+		}
+	}
+	fields := make([]string, 0, len(preferred))
+	for _, field := range preferred {
+		if _, ok := available[field]; ok {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func reportPageSize(value int) int {
+	allowed := []int{10, 20, 50, 100, 200}
+	if value <= allowed[0] {
+		return allowed[0]
+	}
+	for _, size := range allowed {
+		if value <= size {
+			return size
+		}
+	}
+	return allowed[len(allowed)-1]
+}
+
+func reportFilters(
+	config sdk.UniPromotionReportTopicConfig,
+	startDate string,
+	endDate string,
+	account tenantstore.AccountBinding,
+	anchorID uint64,
+) ([]sdk.UniPromotionReportFilter, error) {
+	filters := make([]sdk.UniPromotionReportFilter, 0)
+	optional := []sdk.UniPromotionReportFilter{}
+	for _, dimension := range config.Dimensions {
+		if dimension.FilterConfig == nil {
+			continue
+		}
+		values := reportFilterValues(dimension, startDate, endDate, account, anchorID)
+		if len(values) == 0 && dimension.FilterConfig.FilterRequired {
+			return nil, fmt.Errorf("官方报表必填筛选 %s 没有可用值", dimension.Field)
+		}
+		operator := dimension.FilterConfig.Operator
+		if operator == 0 {
+			operator = 7
+		}
+		filter := sdk.UniPromotionReportFilter{
+			Field:    dimension.Field,
+			Operator: operator,
+			Values:   values,
+		}
+		if dimension.FilterConfig.FilterRequired {
+			filters = append(filters, filter)
+			continue
+		}
+		switch strings.ToLower(dimension.Field) {
+		case "roi2_material_video_type":
+			optional = append(optional, filter)
+		}
+	}
+	filters = append(filters, optional...)
+	return filters, nil
+}
+
+func reportFilterValues(
+	dimension sdk.UniPromotionReportDimension,
+	startDate string,
+	endDate string,
+	account tenantstore.AccountBinding,
+	anchorID uint64,
+) []string {
+	if dimension.FilterConfig == nil {
+		return nil
+	}
+	field := strings.ToLower(dimension.Field)
+	switch field {
+	case "start_date":
+		return []string{startDate}
+	case "end_date":
+		return []string{endDate}
+	case "anchor_id", "aweme_id":
+		if anchorID > 0 {
+			return []string{formatUintID(anchorID)}
+		}
+	case "advertiser_id":
+		if account.AdvertiserID > 0 {
+			return []string{formatID(account.AdvertiserID)}
+		}
+	}
+
+	// 千川全域配置的枚举格式为 label=接口代码、value=中文展示值。
+	codes := make([]string, 0, len(dimension.FilterConfig.RangeValues))
+	for _, option := range dimension.FilterConfig.RangeValues {
+		if code := strings.TrimSpace(option.Label); code != "" {
+			codes = append(codes, code)
+		}
+	}
+	if len(codes) > 0 {
+		preferred := preferredReportFilterValue(field, codes)
+		if preferred != "" {
+			return []string{preferred}
+		}
+		return codes[:1]
+	}
+	return nil
+}
+
+func preferredReportFilterValue(field string, values []string) string {
+	preferences := map[string][]string{
+		"query_type":               {"all"},
+		"marketing_goal":           {"2"},
+		"aggregate_smart_bid_type": {"0", "7"},
+		"ecp_app_id":               {"1", "2"},
+		"roi2_material_status":     {"1", "2"},
+		"roi2_material_video_type": {"1", "2", "3"},
+		"roi2_material_advice":     {"6", "8", "10", "4", "5"},
+	}
+	for _, candidate := range preferences[field] {
+		if containsString(values, candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func reportCostMetric(fields []string) string {
+	for _, candidate := range []string{
+		"stat_cost_for_roi2",
+		"stat_cost",
+		"total_cost",
+	} {
+		if containsString(fields, candidate) {
+			return candidate
+		}
+	}
+	return fields[0]
+}
+
+func materialFromReportRow(row sdk.UniPromotionReportRow, rank int) MaterialMetrics {
+	dimensions := row.Dimensions
+	metrics := row.Metrics
+	materialID := anyID(dimensions, "material_id", "video_material_id", "mid")
+	showCount := anyInt64(metrics, "live_show_count_for_roi2_v2", "show_cnt", "show_count", "product_show_count_for_roi2")
+	clickCount := anyInt64(metrics, "live_watch_count_for_roi2_v2", "click_cnt", "watch_count", "product_click_count_for_roi2")
+	convertCount := anyInt64(metrics, "total_pay_order_count_for_roi2", "convert_cnt", "conversion_count")
+	cost := anyFloat64(metrics, "stat_cost_for_roi2", "stat_cost", "cost")
+	gmv := anyFloat64(
+		metrics,
+		"total_pay_order_gmv_for_roi2",
+		"total_pay_order_gmv_include_coupon_for_roi2",
+		"pay_order_gmv",
+	)
+	ctr := anyFloat64(metrics, "live_cvr_rate_for_roi2_v2", "ctr", "click_rate")
+	conversionRate := anyFloat64(metrics, "live_convert_rate_for_roi2_v2", "conversion_rate", "convert_rate")
+	if ctr == 0 && showCount > 0 {
+		ctr = float64(clickCount) / float64(showCount) * 100
+	}
+	if conversionRate == 0 && clickCount > 0 {
+		conversionRate = float64(convertCount) / float64(clickCount) * 100
+	}
+	roi := anyFloat64(metrics, "total_prepay_and_pay_order_roi2", "pay_order_roi", "roi")
+	gpm := anyFloat64(metrics, "gpm", "total_live_pay_order_gpm")
+	if gpm == 0 && showCount > 0 {
+		gpm = gmv / float64(showCount) * 1000
+	}
+	return MaterialMetrics{
+		MaterialID:      materialID,
+		Title:           anyString(dimensions, "roi2_material_video_name", "material_name", "title", "video_title"),
+		VideoID:         anyString(dimensions, "video_id"),
+		AwemeItemID:     anyID(dimensions, "aweme_item_id"),
+		Status:          anyString(dimensions, "roi2_material_status", "material_status"),
+		Cost:            cost,
+		ShowCount:       showCount,
+		ClickCount:      clickCount,
+		CTR:             ctr,
+		ConvertCount:    convertCount,
+		ConversionRate:  conversionRate,
+		PayOrderCount:   float64(convertCount),
+		PayOrderGMV:     gmv,
+		ROI:             roi,
+		GPM:             gpm,
+		CostRank:        rank,
+		ProtectedTop3:   rank <= 3,
+		EligibleReplace: rank > 3,
+		MetricSource:    "qianchuan_report_uni_promotion",
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func anyValue(values map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := values[key]; ok && value != nil {
+			return unwrapReportValue(value)
+		}
+	}
+	return nil
+}
+
+func unwrapReportValue(value any) any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	for _, key := range []string{"Value", "ValueStr", "ShortValueStr"} {
+		if nested, exists := object[key]; exists && nested != nil {
+			return nested
+		}
+	}
+	return value
+}
+
+func anyID(values map[string]any, keys ...string) string {
+	value := anyValue(values, keys...)
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case json.Number:
+		return typed.String()
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case int:
+		return strconv.Itoa(typed)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	default:
+		return ""
+	}
+}
+
+func anyString(values map[string]any, keys ...string) string {
+	value := anyValue(values, keys...)
+	if typed, ok := value.(string); ok {
+		return typed
+	}
+	return ""
+}
+
+func anyFloat64(values map[string]any, keys ...string) float64 {
+	value := anyValue(values, keys...)
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		parsed, _ := typed.Float64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseFloat(typed, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func anyInt64(values map[string]any, keys ...string) int64 {
+	value := anyValue(values, keys...)
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseInt(typed, 10, 64)
+		return parsed
+	default:
+		return 0
 	}
 }
 
@@ -832,7 +1311,12 @@ func planMap(plan sdk.UniPromotion) map[string]any {
 	}
 }
 
-func apiError(prefix string, code int64, message string) error {
+func apiError(prefix string, code int64, message string, requestIDs ...string) error {
+	for _, requestID := range requestIDs {
+		if requestID = strings.TrimSpace(requestID); requestID != "" {
+			return fmt.Errorf("%s[%d]: %s (request_id=%s)", prefix, code, message, requestID)
+		}
+	}
 	return fmt.Errorf("%s[%d]: %s", prefix, code, message)
 }
 
@@ -851,7 +1335,16 @@ func formatUintID(id uint64) string {
 }
 
 func today() string {
-	return time.Now().Format("2006-01-02")
+	return time.Now().In(shanghaiLocation).Format("2006-01-02")
+}
+
+var shanghaiLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func businessDayRange(now time.Time) (string, string) {
+	local := now.In(shanghaiLocation)
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, shanghaiLocation)
+	return start.Format("2006-01-02 15:04:05"),
+		start.Add(24*time.Hour - time.Second).Format("2006-01-02 15:04:05")
 }
 
 func stringArg(args map[string]any, key, fallback string) string {
