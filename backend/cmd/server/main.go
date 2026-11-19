@@ -130,7 +130,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	api.GET("/access/status", accessHandler.Status)
 	api.POST("/access/login", accessHandler.Login)
 	api.POST("/access/logout", accessHandler.Logout)
-	api.POST("/oauth/exchange", middleware.AccessRequired(), authHandler.OAuthExchange)
+	api.POST("/oauth/exchange", authHandler.OAuthExchange)
 	api.POST("/auth/refresh", middleware.AccessRequired(), authHandler.RefreshSession)
 
 	protected := api.Group("")

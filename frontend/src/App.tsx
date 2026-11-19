@@ -196,7 +196,7 @@ function App() {
     return <Loading fullScreen text="加载中..." size="lg" />
   }
 
-  if (!accessAuthenticated && location.pathname !== '/access') {
+  if (!accessAuthenticated && location.pathname !== '/access' && location.pathname !== '/auth/callback') {
     return <Navigate to="/access" replace />
   }
   
