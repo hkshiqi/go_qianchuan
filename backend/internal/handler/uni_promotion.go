@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/CriarBrand/qianchuan-backend/internal/middleware"
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
@@ -37,14 +41,44 @@ func (h *UniPromotionHandler) List(c *gin.Context) {
 
 	page, _ := strconv.Atoi(pageStr)
 	pageSize, _ := strconv.Atoi(pageSizeStr)
+	if page <= 0 {
+		page = 1
+	}
+	switch pageSize {
+	case 10, 20, 50, 100:
+	default:
+		pageSize = 20
+	}
+
+	now := time.Now()
+	startTime := c.DefaultQuery("start_time", now.AddDate(0, -6, 0).Format("2006-01-02 15:04:05"))
+	endTime := c.DefaultQuery("end_time", now.Format("2006-01-02 15:04:05"))
+	marketingGoal := c.DefaultQuery("marketing_goal", "LIVE_PROM_GOODS")
+	orderField := c.DefaultQuery("order_field", "stat_cost")
+	orderType := strings.ToUpper(c.DefaultQuery("order_type", "DESC"))
+	fields := parseStringList(c.Query("fields"))
+	if len(fields) == 0 {
+		fields = []string{
+			"stat_cost",
+			"total_pay_order_gmv_for_roi2",
+			"total_pay_order_count_for_roi2",
+			"total_prepay_and_pay_order_roi2",
+		}
+	}
 
 	log.Printf("UniPromotion List: advertiser_id=%d, page=%d, page_size=%d", advertiserId, page, pageSize)
 
 	resp, err := h.service.Client.UniPromotionList(c.Request.Context(), sdk.UniPromotionListReq{
-		AccessToken:  userSession.AccessToken,
-		AdvertiserId: advertiserId,
-		Page:         page,
-		PageSize:     pageSize,
+		AccessToken:   userSession.AccessToken,
+		AdvertiserId:  advertiserId,
+		StartTime:     startTime,
+		EndTime:       endTime,
+		MarketingGoal: marketingGoal,
+		Fields:        fields,
+		OrderField:    orderField,
+		OrderType:     orderType,
+		Page:          page,
+		PageSize:      pageSize,
 	})
 	if err != nil {
 		util.ServerError(c, "获取全域推广列表失败: "+err.Error())
@@ -243,25 +277,73 @@ func (h *UniPromotionHandler) UpdateStatus(c *gin.Context) {
 	})
 }
 
-// UpdateMaterial 获取/删除全域推广素材
-// 此方法处理素材相关操作（获取或删除）
+// UpdateMaterial 删除全域推广计划下素材
+// POST /qianchuan/uni-promotion/material/delete
 func (h *UniPromotionHandler) UpdateMaterial(c *gin.Context) {
-	// 删除操作 - POST
 	var req struct {
 		AdvertiserId uint64   `json:"advertiser_id"`
 		AdId         uint64   `json:"ad_id" binding:"required"`
-		VideoIds     []string `json:"video_ids"`
-		ImageIds     []string `json:"image_ids"`
+		MaterialIds  []uint64 `json:"material_ids" binding:"required"`
+		Titles       []string `json:"titles"`
+		StartDate    string   `json:"start_date"`
+		EndDate      string   `json:"end_date"`
+		MaterialType string   `json:"material_type"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		util.BadRequest(c, "参数错误: "+err.Error())
 		return
 	}
+	if len(req.MaterialIds) == 0 {
+		util.BadRequest(c, "material_ids 不能为空，禁止仅按标题删除素材")
+		return
+	}
 
 	userSession, _ := middleware.GetUserSession(c)
 	if req.AdvertiserId == 0 {
 		req.AdvertiserId = uint64(userSession.AdvertiserID)
+	}
+	// The protection window is server-controlled. Client-supplied dates must
+	// not be able to hide top-spending materials from the delete guard.
+	req.StartDate = time.Now().Format("2006-01-02")
+	req.EndDate = req.StartDate
+	if req.MaterialType == "" {
+		req.MaterialType = "VIDEO"
+	}
+
+	protected, err := topSpendingMaterialIDs(
+		c.Request.Context(),
+		h.service.Client,
+		userSession.AccessToken,
+		req.AdvertiserId,
+		req.AdId,
+		req.MaterialType,
+		req.StartDate,
+		req.EndDate,
+	)
+	if err != nil {
+		util.ServerError(c, "无法验证素材消耗排名，已拒绝删除: "+err.Error())
+		return
+	}
+	var blocked []uint64
+	for _, materialID := range req.MaterialIds {
+		if protected[materialID] {
+			blocked = append(blocked, materialID)
+		}
+	}
+	if len(blocked) > 0 {
+		c.JSON(http.StatusConflict, util.ApiResponse{
+			Code:    util.CodeConflict,
+			Message: "消耗最高的前3素材必须保留，删除请求已拒绝",
+			Data: gin.H{
+				"blocked_material_ids": blocked,
+				"window": gin.H{
+					"start_date": req.StartDate,
+					"end_date":   req.EndDate,
+				},
+			},
+		})
+		return
 	}
 
 	log.Printf("UniPromotion MaterialDelete: advertiser_id=%d, ad_id=%d", req.AdvertiserId, req.AdId)
@@ -270,7 +352,9 @@ func (h *UniPromotionHandler) UpdateMaterial(c *gin.Context) {
 		AccessToken:  userSession.AccessToken,
 		AdvertiserId: req.AdvertiserId,
 		AdId:         req.AdId,
-		Titles:       req.VideoIds, // Using VideoIds as titles placeholder
+		MaterialIds:  req.MaterialIds,
+		Titles:       req.Titles,
+		MaterialType: req.MaterialType,
 	})
 	if err != nil {
 		util.ServerError(c, "删除全域推广素材失败: "+err.Error())
@@ -286,6 +370,44 @@ func (h *UniPromotionHandler) UpdateMaterial(c *gin.Context) {
 	}
 
 	util.Success(c, gin.H{"message": "删除成功"})
+}
+
+// AddExistingMaterial adds material-library entries to a plan.
+// POST /qianchuan/uni-promotion/material/add-existing
+func (h *UniPromotionHandler) AddExistingMaterial(c *gin.Context) {
+	var req struct {
+		AdvertiserId  uint64                   `json:"advertiser_id"`
+		AdId          uint64                   `json:"ad_id" binding:"required"`
+		VideoMaterial []sdk.UniPromotionMaterial `json:"video_material" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		util.BadRequest(c, "参数错误: "+err.Error())
+		return
+	}
+
+	userSession, _ := middleware.GetUserSession(c)
+	if req.AdvertiserId == 0 {
+		req.AdvertiserId = uint64(userSession.AdvertiserID)
+	}
+
+	resp, err := h.service.Client.UniPromotionMaterialAdd(
+		c.Request.Context(),
+		sdk.UniPromotionMaterialAddReq{
+			AccessToken:   userSession.AccessToken,
+			AdvertiserId:  req.AdvertiserId,
+			AdId:          req.AdId,
+			VideoMaterial: req.VideoMaterial,
+		},
+	)
+	if err != nil {
+		util.ServerError(c, "添加现有素材失败: "+err.Error())
+		return
+	}
+	if resp.Code != 0 {
+		util.BadRequest(c, fmt.Sprintf("添加现有素材失败[%d]: %s", resp.Code, resp.Message))
+		return
+	}
+	util.Success(c, gin.H{"message": "添加成功"})
 }
 
 // UpdateAuth 全域授权初始化
@@ -530,9 +652,9 @@ func (h *UniPromotionHandler) GetBudgetSchedule(c *gin.Context) {
 	})
 }
 
-// UpdateBudgetSchedule 获取全域推广素材
+// GetMaterials 获取全域推广素材
 // GET /qianchuan/uni_promotion/material/get
-func (h *UniPromotionHandler) UpdateBudgetSchedule(c *gin.Context) {
+func (h *UniPromotionHandler) GetMaterials(c *gin.Context) {
 	userSession, _ := middleware.GetUserSession(c)
 	advertiserIdStr := c.Query("advertiser_id")
 	adIdStr := c.Query("ad_id")
@@ -546,13 +668,53 @@ func (h *UniPromotionHandler) UpdateBudgetSchedule(c *gin.Context) {
 		util.BadRequest(c, "ad_id 参数必填")
 		return
 	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page <= 0 {
+		page = 1
+	}
+	switch pageSize {
+	case 10, 20, 50, 100:
+	default:
+		pageSize = 20
+	}
+	materialType := strings.ToUpper(c.DefaultQuery("material_type", "VIDEO"))
+	fields := parseStringList(c.Query("fields"))
+	if len(fields) == 0 {
+		fields = []string{
+			"stat_cost_for_roi2",
+			"total_pay_order_gmv_for_roi2",
+			"total_pay_order_count_for_roi2",
+			"total_prepay_and_pay_order_roi2",
+			"live_show_count_for_roi2_v2",
+			"live_watch_count_for_roi2_v2",
+			"live_cvr_rate_for_roi2_v2",
+			"live_convert_rate_for_roi2_v2",
+			"live_show_count_exclude_video_for_roi2",
+			"live_watch_count_exclude_video_for_roi2",
+			"live_cvr_rate_exclude_video_for_roi2",
+			"live_convert_rate_exclude_video_for_roi2",
+		}
+	}
 
 	log.Printf("UniPromotion MaterialGet: advertiser_id=%d, ad_id=%d", advertiserId, adId)
 
 	resp, errSdk := h.service.Client.UniPromotionMaterialGet(c.Request.Context(), sdk.UniPromotionMaterialGetReq{
-		AccessToken:  userSession.AccessToken,
-		AdvertiserId: advertiserId,
-		AdId:         adId,
+		AccessToken:        userSession.AccessToken,
+		AdvertiserId:       advertiserId,
+		AdId:               adId,
+		MaterialType:       materialType,
+		VideoType:          c.Query("video_type"),
+		Status:             c.Query("material_status"),
+		MaterialSelectType: c.Query("material_select_type"),
+		AnalysisType:       parseStringList(c.Query("analysis_type")),
+		StartDate:          c.Query("start_date"),
+		EndDate:            c.Query("end_date"),
+		Fields:             fields,
+		OrderField:         c.DefaultQuery("order_field", "stat_cost_for_roi2"),
+		OrderType:          strings.ToUpper(c.DefaultQuery("order_type", "DESC")),
+		Page:               page,
+		PageSize:           pageSize,
 	})
 	if errSdk != nil {
 		util.ServerError(c, "获取全域推广素材失败: "+errSdk.Error())
@@ -567,7 +729,45 @@ func (h *UniPromotionHandler) UpdateBudgetSchedule(c *gin.Context) {
 		return
 	}
 
+	protected, err := topSpendingMaterialIDs(
+		c.Request.Context(),
+		h.service.Client,
+		userSession.AccessToken,
+		advertiserId,
+		adId,
+		materialType,
+		time.Now().Format("2006-01-02"),
+		time.Now().Format("2006-01-02"),
+	)
+	if err != nil {
+		util.ServerError(c, "识别消耗前3素材失败: "+err.Error())
+		return
+	}
 	util.Success(c, gin.H{
-		"materials": resp.Data.Materials,
+		"materials":       resp.Data.Materials,
+		"page_info":       resp.Data.PageInfo,
+		"protected_top3":  protected,
+		"protection_rule": "当日消耗按 stat_cost_for_roi2 降序的前3名素材必须保留",
 	})
+}
+
+func parseStringList(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "[]" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") {
+		var result []string
+		if err := json.Unmarshal([]byte(value), &result); err == nil {
+			return result
+		}
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }

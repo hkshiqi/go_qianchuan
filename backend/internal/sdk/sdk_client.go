@@ -3,13 +3,15 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	oecore "github.com/bububa/oceanengine/marketing-api/core"
 
 	// Enum types
 	"github.com/bububa/oceanengine/marketing-api/enum"
-	"github.com/bububa/oceanengine/marketing-api/enum/qianchuan"
+	qianchuanEnum "github.com/bububa/oceanengine/marketing-api/enum/qianchuan"
 
 	// OAuth
 	oauthAPI "github.com/bububa/oceanengine/marketing-api/api/oauth"
@@ -142,7 +144,13 @@ func (c *OceanengineClient) OauthRefreshToken(ctx context.Context, req OauthRefr
 		return &OauthRefreshTokenRes{
 			Code:    500,
 			Message: err.Error(),
-		}, nil
+		}, err
+	}
+	if data == nil || data.AccessToken == "" {
+		return &OauthRefreshTokenRes{
+			Code:    40103,
+			Message: "refresh_token 无效或已过期，需要重新授权",
+		}, fmt.Errorf("refresh token response is empty")
 	}
 
 	advertiserIds := make([]int64, len(data.AdvertiserIDs))
@@ -720,10 +728,10 @@ func (c *OceanengineClient) AdCreate(ctx context.Context, req AdCreateReq) (*AdC
 				oeReq.DeliverySetting.RoiGoal = v
 			}
 			if v, ok := ds["deep_bid_type"].(string); ok {
-				oeReq.DeliverySetting.DeepBidType = qianchuan.DeepBidType(v)
+				oeReq.DeliverySetting.DeepBidType = qianchuanEnum.DeepBidType(v)
 			}
 			if v, ok := ds["external_action"].(string); ok {
-				oeReq.DeliverySetting.ExternalAction = qianchuan.ExternalAction(v)
+				oeReq.DeliverySetting.ExternalAction = qianchuanEnum.ExternalAction(v)
 			}
 		}
 	}
@@ -772,10 +780,10 @@ func (c *OceanengineClient) AdUpdate(ctx context.Context, req AdUpdateReq) (*AdU
 				oeReq.DeliverySetting.RoiGoal = v
 			}
 			if v, ok := ds["deep_bid_type"].(string); ok {
-				oeReq.DeliverySetting.DeepBidType = qianchuan.DeepBidType(v)
+				oeReq.DeliverySetting.DeepBidType = qianchuanEnum.DeepBidType(v)
 			}
 			if v, ok := ds["external_action"].(string); ok {
-				oeReq.DeliverySetting.ExternalAction = qianchuan.ExternalAction(v)
+				oeReq.DeliverySetting.ExternalAction = qianchuanEnum.ExternalAction(v)
 			}
 		}
 	}
@@ -809,7 +817,7 @@ func (c *OceanengineClient) AdStatusUpdate(ctx context.Context, req AdStatusUpda
 	oeReq := &adModel.UpdateStatusRequest{
 		AdvertiserID: uint64(req.Body.AdvertiserId),
 		AdIDs:        adIds,
-		OptStatus:    qianchuan.AdOptStatus(req.Body.OptStatus), // 类型转换
+		OptStatus:    qianchuanEnum.AdOptStatus(req.Body.OptStatus), // 类型转换
 	}
 
 	data, err := adAPI.UpdateStatus(ctx, c.client, req.AccessToken, oeReq)
@@ -1110,10 +1118,16 @@ func (c *OceanengineClient) FileVideoGet(ctx context.Context, req FileVideoGetRe
 	}
 
 	if req.Filtering != nil {
-		oeReq.Filtering = &fileModel.ImageGetFilter{
-			Sigatures: req.Filtering.Signatures,
-			StartTIme: req.Filtering.StartTime,
-			EndTime:   req.Filtering.EndTime,
+		materialIDs := make([]string, len(req.Filtering.MaterialIds))
+		for i, id := range req.Filtering.MaterialIds {
+			materialIDs[i] = strconv.FormatInt(id, 10)
+		}
+		oeReq.Filtering = &fileModel.VideoGetFilter{
+			VideoIDs:    req.Filtering.VideoIds,
+			MaterialIDs: materialIDs,
+			Sigatures:   req.Filtering.Signatures,
+			StartTime:   req.Filtering.StartTime,
+			EndTime:     req.Filtering.EndTime,
 		}
 	}
 
@@ -1269,6 +1283,68 @@ func (c *OceanengineClient) ReportCreativeGet(ctx context.Context, req ReportCre
 		}
 	}
 
+	return res, nil
+}
+
+func (c *OceanengineClient) ReportMaterialGet(ctx context.Context, req ReportMaterialGetReq) (*ReportMaterialGetRes, error) {
+	oeReq := &reportModel.GetRequest{
+		AdvertiserID:    uint64(req.AdvertiserId),
+		StartDate:       parseDate(req.StartDate),
+		EndDate:         parseDate(req.EndDate),
+		Fields:          req.Fields,
+		Page:            int(req.Page),
+		PageSize:        int(req.PageSize),
+		OrderField:      req.OrderField,
+		OrderType:       enum.OrderType(strings.ToUpper(req.OrderType)),
+		TimeGranularity: enum.TimeGranularity(req.TimeGranularity),
+	}
+	if req.Filtering != nil {
+		materialIds := make([]uint64, len(req.Filtering.MaterialId))
+		for i, id := range req.Filtering.MaterialId {
+			if id > 0 {
+				materialIds[i] = uint64(id)
+			}
+		}
+		adIds := make([]uint64, len(req.Filtering.AdIds))
+		for i, id := range req.Filtering.AdIds {
+			if id > 0 {
+				adIds[i] = uint64(id)
+			}
+		}
+		oeReq.Filtering = &reportModel.StatFiltering{
+			AdIDs:         adIds,
+			MaterialID:    materialIds,
+			MarketingGoal: enum.MarketingGoal(req.Filtering.MarketingGoal),
+			MaterialType:  qianchuanEnum.MaterialType(req.Filtering.MaterialType),
+			AnalysisType:  req.Filtering.AnalysisType,
+		}
+	}
+
+	data, err := reportAPI.MaterialGet(ctx, c.client, req.AccessToken, oeReq)
+	if err != nil {
+		return &ReportMaterialGetRes{
+			Code:    500,
+			Message: err.Error(),
+		}, nil
+	}
+	res := &ReportMaterialGetRes{
+		Code:    0,
+		Message: "success",
+	}
+	if data != nil {
+		res.Data.List = make([]interface{}, len(data.List))
+		for i := range data.List {
+			res.Data.List[i] = data.List[i]
+		}
+		if data.PageInfo != nil {
+			res.Data.PageInfo = PageInfo{
+				Page:        data.PageInfo.Page,
+				PageSize:    data.PageInfo.PageSize,
+				TotalNumber: int64(data.PageInfo.TotalNumber),
+				TotalPage:   data.PageInfo.TotalPage,
+			}
+		}
+	}
 	return res, nil
 }
 
@@ -1949,13 +2025,13 @@ func (c *OceanengineClient) AwemeOrderCreate(ctx context.Context, req AwemeOrder
 			oeReq.DeliverySetting.DeliveryTime = v
 		}
 		if v, ok := ds["external_action"].(string); ok {
-			oeReq.DeliverySetting.ExternalAction = qianchuan.ExternalAction(v)
+			oeReq.DeliverySetting.ExternalAction = qianchuanEnum.ExternalAction(v)
 		}
 		if v, ok := ds["bid_mode"].(string); ok {
-			oeReq.DeliverySetting.BidMode = qianchuan.BidMode(v)
+			oeReq.DeliverySetting.BidMode = qianchuanEnum.BidMode(v)
 		}
 		if v, ok := ds["bid_type"].(string); ok {
-			oeReq.DeliverySetting.BidType = qianchuan.BidType(v)
+			oeReq.DeliverySetting.BidType = qianchuanEnum.BidType(v)
 		}
 		if v, ok := ds["cpa_bid"].(float64); ok {
 			oeReq.DeliverySetting.CpaBid = v
@@ -1964,7 +2040,7 @@ func (c *OceanengineClient) AwemeOrderCreate(ctx context.Context, req AwemeOrder
 			oeReq.DeliverySetting.RoiGoal = v
 		}
 		if v, ok := ds["liveroom_heat_mode"].(string); ok {
-			oeReq.DeliverySetting.LiveroomHeatMode = qianchuan.LiveroomHeatMode(v)
+			oeReq.DeliverySetting.LiveroomHeatMode = qianchuanEnum.LiveroomHeatMode(v)
 		}
 	}
 
@@ -2084,7 +2160,7 @@ func (c *OceanengineClient) AwemeSuggestBid(ctx context.Context, req AwemeSugges
 	// 设置投放设置
 	if req.ExternalAction != "" {
 		oeReq.DeliverySetting = &awemeModel.DeliverySetting{
-			ExternalAction: qianchuan.ExternalAction(req.ExternalAction),
+			ExternalAction: qianchuanEnum.ExternalAction(req.ExternalAction),
 		}
 	}
 
@@ -2358,13 +2434,20 @@ func (c *OceanengineClient) PrivatewordsUpdate(ctx context.Context, req Privatew
 func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromotionListReq) (*UniPromotionListRes, error) {
 	oeReq := &uniPromotionModel.ListRequest{
 		AdvertiserID: req.AdvertiserId,
+		StartTime:    req.StartTime,
+		EndTime:      req.EndTime,
+		MarketingGoal: enum.MarketingGoal(req.MarketingGoal),
+		Fields:       req.Fields,
+		OrderField:   req.OrderField,
+		OrderType:    enum.OrderType(strings.ToUpper(req.OrderType)),
 		Page:         req.Page,
 		PageSize:     req.PageSize,
 	}
 	if req.Filtering != nil {
-		oeReq.Filtering = &uniPromotionModel.ListFilter{}
+		oeReq.Filtering = &uniPromotionModel.ListFilter{
+			SmartBidType: enum.SmartBidType(req.Filtering.SmartBidType),
+		}
 	}
-
 	result, err := uniPromotionAPI.List(ctx, c.client, req.AccessToken, oeReq)
 	if err != nil {
 		return &UniPromotionListRes{
@@ -2425,6 +2508,36 @@ func (c *OceanengineClient) UniPromotionCreate(ctx context.Context, req UniPromo
 		AdvertiserID:  req.AdvertiserId,
 		AwemeID:       req.AwemeId,
 		MarketingGoal: "LIVE_PROM_GOODS",
+		DeliverySetting: &uniPromotionModel.DeliverySetting{},
+		CreativeSetting: &uniPromotionModel.CreativeSetting{},
+		ProgrammaticCreativeMediaList: []uniPromotionModel.ProgrammaticCreativeMedia{
+			{
+				VideoMaterial: []uniPromotionModel.VideoMaterial{},
+			},
+		},
+	}
+	oeReq.DeliverySetting.Budget = req.Budget
+	oeReq.DeliverySetting.Roi2Goal = req.Roi2Goal
+	oeReq.DeliverySetting.StartTime = req.StartTime
+	oeReq.DeliverySetting.EndTime = req.EndTime
+	if req.Budget > 0 {
+		oeReq.DeliverySetting.BudgetMode = "BUDGET_MODE_DAY"
+	}
+	if req.StartTime != "" || req.EndTime != "" {
+		oeReq.DeliverySetting.LiveScheduleType = "SCHEDULE_START_END"
+	} else {
+		oeReq.DeliverySetting.LiveScheduleType = "SCHEDULE_FROM_NOW"
+	}
+	for _, material := range req.VideoMaterial {
+		oeReq.ProgrammaticCreativeMediaList[0].VideoMaterial = append(
+			oeReq.ProgrammaticCreativeMediaList[0].VideoMaterial,
+			uniPromotionModel.VideoMaterial{
+				VideoID:      material.VideoId,
+				VideoCoverID: material.VideoCoverId,
+				AwemeItemID:  material.AwemeItemId,
+				ImageMode:    enum.MaterialMode(material.ImageMode),
+			},
+		)
 	}
 
 	adId, err := uniPromotionAPI.Create(ctx, c.client, req.AccessToken, oeReq)
@@ -2447,6 +2560,29 @@ func (c *OceanengineClient) UniPromotionUpdate(ctx context.Context, req UniPromo
 	oeReq := &uniPromotionModel.UpdateRequest{
 		AdvertiserID: req.AdvertiserId,
 		AdID:         req.AdId,
+		DeliverySetting: &uniPromotionModel.DeliverySetting{},
+		CreativeSetting: &uniPromotionModel.CreativeSetting{},
+	}
+	oeReq.DeliverySetting.Budget = req.Budget
+	oeReq.DeliverySetting.Roi2Goal = req.Roi2Goal
+	oeReq.DeliverySetting.StartTime = req.StartTime
+	oeReq.DeliverySetting.EndTime = req.EndTime
+	if req.StartTime != "" || req.EndTime != "" {
+		oeReq.DeliverySetting.LiveScheduleType = "SCHEDULE_START_END"
+	}
+	if len(req.VideoMaterial) > 0 {
+		media := uniPromotionModel.ProgrammaticCreativeMedia{
+			VideoMaterial: make([]uniPromotionModel.VideoMaterial, 0, len(req.VideoMaterial)),
+		}
+		for _, material := range req.VideoMaterial {
+			media.VideoMaterial = append(media.VideoMaterial, uniPromotionModel.VideoMaterial{
+				VideoID:      material.VideoId,
+				VideoCoverID: material.VideoCoverId,
+				AwemeItemID:  material.AwemeItemId,
+				ImageMode:    enum.MaterialMode(material.ImageMode),
+			})
+		}
+		oeReq.ProgrammaticCreativeMediaList = []uniPromotionModel.ProgrammaticCreativeMedia{media}
 	}
 
 	result, err := uniPromotionAPI.Update(ctx, c.client, req.AccessToken, oeReq)
@@ -2471,7 +2607,7 @@ func (c *OceanengineClient) UniPromotionStatusUpdate(ctx context.Context, req Un
 	oeReq := &uniPromotionModel.StatusUpdateRequest{
 		AdvertiserID: req.AdvertiserId,
 		AdIDs:        req.AdIds,
-		OptStatus:    qianchuan.AdOptStatus(req.OptStatus),
+		OptStatus:    qianchuanEnum.AdOptStatus(req.OptStatus),
 	}
 
 	results, err := uniPromotionAPI.StatusUpdate(ctx, c.client, req.AccessToken, oeReq)
@@ -2488,7 +2624,22 @@ func (c *OceanengineClient) UniPromotionStatusUpdate(ctx context.Context, req Un
 	}
 
 	for _, r := range results {
-		res.Data.AdIds = append(res.Data.AdIds, r.AdID)
+		result := UniPromotionStatusResult{
+			AdId:    r.AdID,
+			Success: r.Flag,
+		}
+		if r.Error != nil {
+			result.ErrorCode = int64(r.Error.ErrorCode)
+			result.ErrorMessage = r.Error.ErrorMessage
+			res.Data.Errors = append(res.Data.Errors, UniPromotionOpError{
+				AdId:         r.AdID,
+				ErrorCode:    int64(r.Error.ErrorCode),
+				ErrorMessage: r.Error.ErrorMessage,
+			})
+		} else if r.Flag {
+			res.Data.AdIds = append(res.Data.AdIds, r.AdID)
+		}
+		res.Data.Results = append(res.Data.Results, result)
 	}
 
 	return res, nil
@@ -2571,9 +2722,18 @@ func (c *OceanengineClient) UniPromotionRoiGoalUpdate(ctx context.Context, req U
 func (c *OceanengineClient) UniPromotionScheduleUpdate(ctx context.Context, req UniPromotionScheduleUpdateReq) (*UniPromotionScheduleUpdateRes, error) {
 	var updateInfos []uniPromotionModel.UpdateScheduleInfo
 	for _, item := range req.Data {
+		scheduleType := item.ScheduleType
+		if scheduleType == "" {
+			if item.EndTime == "" {
+				scheduleType = "SCHEDULE_FROM_NOW"
+			} else {
+				scheduleType = "SCHEDULE_START_END"
+			}
+		}
 		updateInfos = append(updateInfos, uniPromotionModel.UpdateScheduleInfo{
-			AdID:    item.AdId,
-			EndTime: item.EndTime,
+			AdID:         item.AdId,
+			ScheduleType: enum.ScheduleType(scheduleType),
+			EndTime:      item.EndTime,
 		})
 	}
 
@@ -2609,6 +2769,31 @@ func (c *OceanengineClient) UniPromotionMaterialGet(ctx context.Context, req Uni
 	oeReq := &uniPromotionModel.MaterialGetRequest{
 		AdvertiserID: req.AdvertiserId,
 		AdID:         req.AdId,
+		Fields:       req.Fields,
+		OrderField:   req.OrderField,
+		OrderType:    req.OrderType,
+		Page:         req.Page,
+		PageSize:     req.PageSize,
+	}
+	materialType := strings.ToUpper(req.MaterialType)
+	if materialType == "" && req.AdId > 0 {
+		materialType = "VIDEO"
+	}
+	if materialType != "" || req.VideoType != "" || req.Status != "" ||
+		req.MaterialSelectType != "" || len(req.AnalysisType) > 0 ||
+		req.StartDate != "" || req.EndDate != "" {
+		oeReq.Filtering = &uniPromotionModel.MaterialGetFilter{
+			MaterialType:       materialType,
+			VideoType:          req.VideoType,
+			MaterialStatus:     req.Status,
+			MaterialSelectType: req.MaterialSelectType,
+			AnalysisType:       req.AnalysisType,
+			StartDate:          req.StartDate,
+			EndDate:            req.EndDate,
+		}
+	}
+	if oeReq.Filtering == nil {
+		oeReq.Filtering = &uniPromotionModel.MaterialGetFilter{MaterialType: "VIDEO"}
 	}
 
 	result, err := uniPromotionAPI.MaterialGet(ctx, c.client, req.AccessToken, oeReq)
@@ -2625,14 +2810,58 @@ func (c *OceanengineClient) UniPromotionMaterialGet(ctx context.Context, req Uni
 	}
 
 	if result != nil {
-		// SDK returns AdMaterialInfos - parse based on material type
-		for _, m := range result.AdMaterialInfos {
-			// Store as generic interface since SDK uses unified Material type
-			res.Data.Materials = append(res.Data.Materials, m)
+		for i := range result.AdMaterialInfos {
+			res.Data.Materials = append(
+				res.Data.Materials,
+				convertMaterialInfo(&result.AdMaterialInfos[i]),
+			)
+		}
+		if result.PageInfo != nil {
+			res.Data.PageInfo = PageInfo{
+				Page:        result.PageInfo.Page,
+				PageSize:    result.PageInfo.PageSize,
+				TotalNumber: int64(result.PageInfo.TotalNumber),
+				TotalPage:   result.PageInfo.TotalPage,
+			}
 		}
 	}
 
 	return res, nil
+}
+
+func (c *OceanengineClient) UniPromotionMaterialAdd(ctx context.Context, req UniPromotionMaterialAddReq) (*UniPromotionMaterialAddRes, error) {
+	media := make([]uniPromotionModel.VideoMaterial, 0, len(req.VideoMaterial))
+	for _, material := range req.VideoMaterial {
+		media = append(media, uniPromotionModel.VideoMaterial{
+			VideoID:      material.VideoId,
+			VideoCoverID: material.VideoCoverId,
+			AwemeItemID:  material.AwemeItemId,
+			ImageMode:    enum.MaterialMode(material.ImageMode),
+		})
+	}
+	oeReq := &uniPromotionModel.MaterialAddRequest{
+		AdvertiserID: req.AdvertiserId,
+		AdID:         req.AdId,
+		ProgrammaticCreativeMediaList: []uniPromotionModel.ProgrammaticCreativeMedia{
+			{VideoMaterial: media},
+		},
+	}
+	if err := uniPromotionAPI.MaterialAdd(ctx, c.client, req.AccessToken, oeReq); err != nil {
+		return &UniPromotionMaterialAddRes{
+			Code:    500,
+			Message: err.Error(),
+		}, nil
+	}
+	return &UniPromotionMaterialAddRes{Code: 0, Message: "success"}, nil
+}
+
+// calculateGPM follows the live-commerce convention:
+// paid GMV per 1,000 impressions.
+func calculateGPM(payOrderAmount float64, showCnt int64) float64 {
+	if showCnt <= 0 {
+		return 0
+	}
+	return payOrderAmount / float64(showCnt) * 1000
 }
 
 func (c *OceanengineClient) UniPromotionMaterialDelete(ctx context.Context, req UniPromotionMaterialDeleteReq) (*UniPromotionMaterialDeleteRes, error) {
@@ -2720,19 +2949,112 @@ func (c *OceanengineClient) UniPromotionAuthInit(ctx context.Context, req UniPro
 
 // ===== Helper Functions =====
 
+func convertMaterialInfo(m *uniPromotionModel.Material) UniPromotionMaterialInfo {
+	info := UniPromotionMaterialInfo{
+		MaterialStatus:    m.MaterialStatus,
+		AuditStatus:       m.AuditStatus,
+		IsDeleted:         m.IsDelete,
+		DeliveryNotReason: append([]string(nil), m.DeliveryNotReason...),
+	}
+	if len(m.ProductInfo) > 0 {
+		info.ProductId = m.ProductInfo[0].ProductID
+		info.ProductName = m.ProductInfo[0].ProductName
+	}
+
+	if m.MaterialInfo != nil {
+		info.MaterialType = m.MaterialInfo.MaterialType
+		if video := m.MaterialInfo.VideoMaterial; video != nil {
+			info.MaterialId = video.MaterialID
+			info.ImageMode = string(video.ImageMode)
+			info.VideoId = video.VideoID
+			info.VideoCoverId = video.VideoCoverID
+			info.AwemeItemId = video.AwemeItemID
+			info.MaterialName = video.Title
+			if video.CoverImage != nil {
+				info.CoverImage = video.CoverImage.ImageURL
+			}
+		}
+		if title := m.MaterialInfo.TitleMaterial; title != nil {
+			info.MaterialId = title.MaterialID
+			info.MaterialName = title.Title
+		}
+		if image := m.MaterialInfo.ImageMaterial; image != nil {
+			info.MaterialId = image.MaterialID
+			info.ImageId = image.ImageID
+			info.CoverImage = image.ImageURL
+		}
+		if room := m.MaterialInfo.RoomMaterial; room != nil {
+			info.MaterialId = room.MaterialID
+			info.MaterialName = room.AwemeName
+		}
+		if carousel := m.MaterialInfo.CarouselMaterial; carousel != nil {
+			info.MaterialId = carousel.MaterialID
+			info.MaterialName = carousel.Title
+		}
+	}
+
+	if stats := m.StatsInfo; stats != nil {
+		info.StatCost = stats.StatCostForRoi2
+		info.ConvertCnt = stats.TotalPayOrderCountForRoi2
+		info.PayOrderAmount = stats.TotalPayOrderGmvForRoi2
+		info.Roi2 = stats.TotalPrepayAndPayOrderRoi2
+		if info.Roi2 == 0 && stats.StatCostForRoi2 > 0 {
+			info.Roi2 = stats.TotalPayOrderGmvForRoi2 / stats.StatCostForRoi2
+		}
+
+		// Video and live-room exposures are mutually exclusive for a
+		// material in practice. Select the populated source so GPM is not
+		// silently calculated from the wrong denominator.
+		showCount := stats.LiveShowCountForRoi2V2
+		watchCount := stats.LiveWatchCountForRoi2V2
+		ctr := stats.LiveCvrRateForRoi2V2
+		cvr := stats.LiveConvertRateForRoi2V2
+		if showCount == 0 && stats.LiveShowCountExcludeVideoForRoi2 > 0 {
+			showCount = stats.LiveShowCountExcludeVideoForRoi2
+			watchCount = stats.LiveWatchCountExcludeVideoForRoi2
+			ctr = stats.LiveCvrRateExcludeVideoForRoi2
+			cvr = stats.LiveConvertRateExcludeVideoForRoi2
+		}
+		info.ShowCnt = showCount
+		info.ClickCnt = watchCount
+		info.Ctr = ctr
+		info.ConversionRate = cvr
+		info.LiveShowCount = stats.LiveShowCountForRoi2V2
+		info.LiveWatchCount = stats.LiveWatchCountForRoi2V2
+		info.LiveCtr = stats.LiveCvrRateForRoi2V2
+		info.LiveConversionRate = stats.LiveConvertRateForRoi2V2
+		info.LiveShowCountExcludeVideo = stats.LiveShowCountExcludeVideoForRoi2
+		info.LiveWatchCountExcludeVideo = stats.LiveWatchCountExcludeVideoForRoi2
+		info.LiveCtrExcludeVideo = stats.LiveCvrRateExcludeVideoForRoi2
+		info.LiveConversionRateExcludeVideo = stats.LiveConvertRateExcludeVideoForRoi2
+		info.Gpm = calculateGPM(stats.TotalPayOrderGmvForRoi2, showCount)
+	}
+	return info
+}
+
 func convertOeAdToUniPromotion(ad *uniPromotionModel.Ad) UniPromotion {
 	result := UniPromotion{}
 	if ad.AdInfo != nil {
 		result.AdId = ad.AdInfo.ID
+		result.AdName = ad.AdInfo.Name
 		result.MarketingGoal = string(ad.AdInfo.MarketingGoal)
 		result.Status = string(ad.AdInfo.Status)
 		result.OptStatus = string(ad.AdInfo.OptStatus)
 		result.Budget = ad.AdInfo.Budget
 		result.Roi2Goal = ad.AdInfo.Roi2Goal
+		result.SmartBidType = string(ad.AdInfo.SmartBidType)
 		result.StartTime = ad.AdInfo.StartTime
 		result.EndTime = ad.AdInfo.EndTime
 		result.CreateTime = ad.AdInfo.CreateTime
 		result.ModifyTime = ad.AdInfo.ModifyTime
+	}
+	if ad.StatsInfo != nil {
+		// The plan-list stat_cost field is denominated in thousandths of
+		// a cent; 100000 units equal one yuan.
+		result.StatCost = ad.StatsInfo.StatCost / 100000
+		result.PayOrderCount = float64(ad.StatsInfo.TotalPayOrderCountForRoi2)
+		result.PayOrderGMV = ad.StatsInfo.TotalPayOrderGmvForRoi2
+		result.PayOrderROI = ad.StatsInfo.TotalPrepayAndPayOrderRoi2
 	}
 	return result
 }
@@ -2744,6 +3066,9 @@ func convertOeAdDetailToUniPromotion(detail *uniPromotionModel.AdDetail) UniProm
 		MarketingGoal: string(detail.MarketingGoal),
 		Status:        string(detail.Status),
 		OptStatus:     string(detail.OptStatus),
+		SmartBidType:  string(detail.SmartBidType),
+		Roi2Goal:      detail.ROI2Goal,
+		Budget:        detail.Budget,
 		CreateTime:    detail.CreateTime,
 		ModifyTime:    detail.ModifyTime,
 	}

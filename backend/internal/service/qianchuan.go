@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
+	"github.com/CriarBrand/qianchuan-backend/internal/tokenmanager"
 )
 
 // QianchuanService 千川服务层
@@ -16,6 +18,12 @@ type QianchuanService struct {
 	AppId int64
 	// AppSecret 应用密钥，用于API调用
 	AppSecret string
+	// TokenManager 负责加密持久化和自动刷新 OAuth 凭证。
+	TokenManager *tokenmanager.Manager
+	// DefaultAdvertiserID 和 DefaultAwemeID 用于 MCP 在无网页会话时选定账户。
+	DefaultAdvertiserID int64
+	DefaultAwemeID      int64
+	DefaultLiveRoomID   int64
 }
 
 // NewQianchuanService 创建千川服务实例
@@ -37,6 +45,27 @@ func NewQianchuanService(client sdk.QianchuanClient, appId int64, appSecret stri
 		AppId:     appId,
 		AppSecret: appSecret,
 	}
+}
+
+// AccessTokenFor resolves a valid token for server-side API calls.
+func (s *QianchuanService) AccessTokenFor(ctx context.Context, advertiserID int64) (string, int64, error) {
+	if advertiserID <= 0 {
+		advertiserID = s.DefaultAdvertiserID
+	}
+	if advertiserID <= 0 {
+		return "", 0, fmt.Errorf("未配置默认 advertiser_id")
+	}
+	if s.TokenManager == nil {
+		return "", advertiserID, fmt.Errorf("TokenManager 未初始化")
+	}
+	token, err := s.TokenManager.AccessToken(ctx, advertiserID)
+	if err != nil {
+		return "", advertiserID, err
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", advertiserID, fmt.Errorf("授权已过期，请重新登录")
+	}
+	return token, advertiserID, nil
 }
 
 // ==================== 广告主管理 ====================

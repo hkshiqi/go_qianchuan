@@ -11,14 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// truncateString 截断字符串用于日志输出，避免敏感信息完全暴露
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
 // AuthHandler 认证处理器
 type AuthHandler struct {
 	service *service.QianchuanService
@@ -44,9 +36,7 @@ func NewAuthHandler(service *service.QianchuanService) *AuthHandler {
 // @Failure      500      {object}  map[string]interface{}  "内部错误"
 // @Router       /oauth/exchange [post]
 func (h *AuthHandler) OAuthExchange(c *gin.Context) {
-	log.Printf("🔵 [OAuthExchange] Starting OAuth exchange...")
-	log.Printf("🔵 [OAuthExchange] Request Origin: %s", c.Request.Header.Get("Origin"))
-	log.Printf("🔵 [OAuthExchange] Request Host: %s", c.Request.Host)
+	log.Printf("[OAuthExchange] starting OAuth exchange")
 
 	var req struct {
 		Code  string `json:"code" binding:"required"`
@@ -59,53 +49,41 @@ func (h *AuthHandler) OAuthExchange(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🔵 [OAuthExchange] Auth code received: %s", truncateString(req.Code, 20))
-	log.Printf("🔵 [OAuthExchange] State received: %s", req.State)
-
-	// State验证日志（实际验证在前端完成，后端记录用于安全审计）
-	// 后端无法直接验证state（因为state存储在前端sessionStorage），但记录它有助于安全审计
-	if req.State == "" {
-		log.Printf("⚠️ [OAuthExchange] Warning: No state parameter provided - potential CSRF risk")
-		// 在严格模式下可以拒绝无state的请求，但为了兼容性这里只记录警告
-	}
-
 	// 调用SDK换取AccessToken
-	log.Printf("🔵 [OAuthExchange] Step 1: Exchanging auth code for access token...")
+	log.Printf("[OAuthExchange] exchanging authorization code")
 	tokenResp, err := h.service.Client.OauthAccessToken(c.Request.Context(), sdk.OauthAccessTokenReq{
 		AuthCode: req.Code,
 	})
 	if err != nil {
-		log.Printf("❌ [OAuthExchange] OAuth exchange failed: %v", err)
+		log.Printf("[OAuthExchange] OAuth exchange failed: %v", err)
 		util.ServerError(c, "OAuth授权失败: "+err.Error())
 		return
 	}
 
 	// 检查响应码
 	if tokenResp.Code != 0 {
-		log.Printf("❌ [OAuthExchange] OAuth API error: code=%d, message=%s", tokenResp.Code, tokenResp.Message)
+		log.Printf("[OAuthExchange] OAuth API error: code=%d, message=%s", tokenResp.Code, tokenResp.Message)
 		util.ServerError(c, "OAuth授权失败: "+tokenResp.Message)
 		return
 	}
 
 	// 检查 Data 是否为 nil
 	if tokenResp.Data == nil {
-		log.Printf("❌ [OAuthExchange] OAuth response data is nil")
+		log.Printf("[OAuthExchange] OAuth response data is nil")
 		util.ServerError(c, "OAuth授权失败: 响应数据为空")
 		return
 	}
 
-	log.Printf("✅ [OAuthExchange] Step 1 Success: Got access token")
-	log.Printf("   - AccessToken: %s", truncateString(tokenResp.Data.AccessToken, 20))
-	log.Printf("   - ExpiresIn: %d seconds", tokenResp.Data.ExpiresIn)
+	log.Printf("[OAuthExchange] token exchange succeeded; expires_in=%d", tokenResp.Data.ExpiresIn)
 
 	// 尝试获取广告主列表（用于获取advertiser_id）
-	log.Printf("🔵 [OAuthExchange] Step 2: Fetching advertiser list...")
+	log.Printf("[OAuthExchange] fetching advertiser list")
 	var advertiserId int64 = 0
 
 	// 优先使用 Token响应中的 AdvertiserId
 	if tokenResp.Data.AdvertiserId != 0 {
 		advertiserId = tokenResp.Data.AdvertiserId
-		log.Printf("✅ [OAuthExchange] Using AdvertiserId from token response: %d", advertiserId)
+		log.Printf("[OAuthExchange] using advertiser_id from token response: %d", advertiserId)
 	} else {
 		// 如果 token 响应中没有，尝试调用 AdvertiserList API
 		advertiserResp, err := h.service.Client.AdvertiserList(c.Request.Context(), sdk.AdvertiserListReq{
@@ -114,55 +92,57 @@ func (h *AuthHandler) OAuthExchange(c *gin.Context) {
 			Secret:      h.service.AppSecret,
 		})
 
-		// 添加详细调试日志
-		log.Printf("   - AppId: %d", h.service.AppId)
 		if advertiserResp != nil {
-			log.Printf("   - Response Code: %d, Message: %s", advertiserResp.Code, advertiserResp.Message)
-			log.Printf("   - Advertiser List Length: %d", len(advertiserResp.Data.List))
-			if len(advertiserResp.Data.List) > 0 {
-				log.Printf("   - First Advertiser: %+v", advertiserResp.Data.List[0])
-			}
+			log.Printf("[OAuthExchange] advertiser list response: code=%d, count=%d", advertiserResp.Code, len(advertiserResp.Data.List))
 		}
 
 		// 如果 API 调用失败，记录警告但不阻止登录
 		if err != nil {
-			log.Printf("⚠️ [OAuthExchange] Get advertiser list failed (non-critical): %v", err)
-			log.Printf("   - This is OK if your app type is 'Advertiser' instead of 'Agent'")
+			log.Printf("[OAuthExchange] get advertiser list failed (non-critical): %v", err)
 		} else {
-			log.Printf("✅ [OAuthExchange] Step 2 Success: Got advertiser list")
+			log.Printf("[OAuthExchange] advertiser list fetched")
 
 			// 如果有广告主，使用第一个
 			if len(advertiserResp.Data.List) > 0 {
 				advertiserId = advertiserResp.Data.List[0].AdvertiserId
-				log.Printf("   - Using AdvertiserId from list: %d", advertiserId)
+				log.Printf("[OAuthExchange] using advertiser_id from list: %d", advertiserId)
 			}
 		}
 	}
 
+	if advertiserId == 0 {
+		advertiserId = h.service.DefaultAdvertiserID
+	}
 	// 无论是否获取到 advertiserId，都允许登录
 	if advertiserId == 0 {
-		log.Printf("⚠️ [OAuthExchange] No advertiser ID available, user will login without advertiser context")
+		log.Printf("[OAuthExchange] no advertiser_id available; session has no advertiser context")
 	}
 
 	// 创建会话
-	log.Printf("🔵 [OAuthExchange] Step 3: Creating session...")
+	log.Printf("[OAuthExchange] creating session")
 	userSession := session.NewSessionFromTokenResponse(&session.TokenResponse{
 		AccessToken:           tokenResp.Data.AccessToken,
 		RefreshToken:          tokenResp.Data.RefreshToken,
 		ExpiresIn:             tokenResp.Data.ExpiresIn,
 		RefreshTokenExpiresIn: tokenResp.Data.RefreshTokenExpiresIn,
 	}, advertiserId)
+	if h.service.TokenManager != nil && advertiserId > 0 {
+		if err := h.service.TokenManager.SaveToken(advertiserId, userSession); err != nil {
+			log.Printf("[OAuthExchange] persist token failed: %v", err)
+			util.ServerError(c, "保存授权凭证失败")
+			return
+		}
+	}
 
 	// 保存到Session
 	sess := sessions.Default(c)
 	sess.Set("user", userSession)
 	if err := sess.Save(); err != nil {
-		log.Printf("❌ [OAuthExchange] Save session failed: %v", err)
+		log.Printf("[OAuthExchange] save session failed: %v", err)
 		util.ServerError(c, "保存会话失败")
 		return
 	}
-	log.Printf("✅ [OAuthExchange] Step 3 Success: Session saved")
-	log.Printf("🎉 [OAuthExchange] OAuth exchange completed successfully!")
+	log.Printf("[OAuthExchange] session saved; OAuth exchange completed")
 
 	util.Success(c, gin.H{"success": true})
 }
@@ -179,39 +159,33 @@ func (h *AuthHandler) OAuthExchange(c *gin.Context) {
 // @Failure      500  {object}  map[string]interface{}  "内部错误"
 // @Router       /user/info [get]
 func (h *AuthHandler) GetUserInfo(c *gin.Context) {
-	log.Printf("🔵 [GetUserInfo] Getting user info...")
-	log.Printf("🔵 [GetUserInfo] Request cookies: %v", c.Request.Cookies())
-
+	log.Printf("[GetUserInfo] fetching user info")
 	sess := sessions.Default(c)
 	sessionData := sess.Get("user")
 
 	if sessionData == nil {
-		log.Printf("❌ [GetUserInfo] No session data found - user not logged in")
+		log.Printf("[GetUserInfo] no session data found")
 		util.Unauthorized(c, "未登录")
 		return
 	}
-	log.Printf("✅ [GetUserInfo] Session data found")
+	log.Printf("[GetUserInfo] session data found")
 
 	userSession, ok := sessionData.(*session.UserSession)
 	if !ok {
-		log.Printf("❌ [GetUserInfo] Session data format error, type: %T", sessionData)
+		log.Printf("[GetUserInfo] session data format error: type=%T", sessionData)
 		util.ServerError(c, "会话数据格式错误")
 		return
 	}
-	log.Printf("✅ [GetUserInfo] Session parsed successfully")
-	log.Printf("   - AdvertiserID: %d", userSession.AdvertiserID)
-	log.Printf("   - AccessToken: %s", truncateString(userSession.AccessToken, 20))
-	log.Printf("   - ExpiresAt: %d", userSession.ExpiresAt)
+	log.Printf("[GetUserInfo] session parsed; advertiser_id=%d", userSession.AdvertiserID)
 
 	// 调用SDK获取用户信息
-	log.Printf("🔵 [GetUserInfo] Fetching user info from API...")
+	log.Printf("[GetUserInfo] fetching user info from API")
 	userInfoResp, err := h.service.Client.UserInfo(c.Request.Context(), sdk.UserInfoReq{
 		AccessToken: userSession.AccessToken,
 	})
 
 	if err != nil {
-		log.Printf("⚠️ [GetUserInfo] Get user info from API failed: %v", err)
-		log.Printf("   - Returning basic info instead")
+		log.Printf("[GetUserInfo] get user info failed; returning basic info: %v", err)
 		// 如果失败，返回基本信息
 		util.Success(c, gin.H{
 			"id":    userSession.AdvertiserID,
@@ -221,7 +195,7 @@ func (h *AuthHandler) GetUserInfo(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ [GetUserInfo] Got user info from API")
+	log.Printf("[GetUserInfo] got user info from API")
 	// 返回真实用户信息
 	util.Success(c, gin.H{
 		"id":    userInfoResp.Data.Id,
@@ -280,23 +254,31 @@ func (h *AuthHandler) RefreshSession(c *gin.Context) {
 		return
 	}
 
-	// 刷新Token
-	refreshResp, err := h.service.Client.OauthRefreshToken(c.Request.Context(), sdk.OauthRefreshTokenReq{
-		RefreshToken: userSession.RefreshToken,
-	})
-	if err != nil {
-		log.Printf("Refresh token failed: %v", err)
-		util.ServerError(c, "刷新会话失败")
-		return
+	var newSession *session.UserSession
+	if h.service.TokenManager != nil {
+		var err error
+		newSession, err = h.service.TokenManager.Refresh(c.Request.Context(), userSession.AdvertiserID)
+		if err != nil {
+			log.Printf("Refresh token failed: %v", err)
+			util.ServerError(c, "刷新会话失败")
+			return
+		}
+	} else {
+		refreshResp, err := h.service.Client.OauthRefreshToken(c.Request.Context(), sdk.OauthRefreshTokenReq{
+			RefreshToken: userSession.RefreshToken,
+		})
+		if err != nil {
+			log.Printf("Refresh token failed: %v", err)
+			util.ServerError(c, "刷新会话失败")
+			return
+		}
+		newSession = session.NewSessionFromTokenResponse(&session.TokenResponse{
+			AccessToken:           refreshResp.Data.AccessToken,
+			RefreshToken:          refreshResp.Data.RefreshToken,
+			ExpiresIn:             refreshResp.Data.ExpiresIn,
+			RefreshTokenExpiresIn: refreshResp.Data.RefreshTokenExpiresIn,
+		}, userSession.AdvertiserID)
 	}
-
-	// 更新会话
-	newSession := session.NewSessionFromTokenResponse(&session.TokenResponse{
-		AccessToken:           refreshResp.Data.AccessToken,
-		RefreshToken:          refreshResp.Data.RefreshToken,
-		ExpiresIn:             refreshResp.Data.ExpiresIn,
-		RefreshTokenExpiresIn: refreshResp.Data.RefreshTokenExpiresIn,
-	}, userSession.AdvertiserID)
 
 	sess.Set("user", newSession)
 	if err := sess.Save(); err != nil {
@@ -306,7 +288,6 @@ func (h *AuthHandler) RefreshSession(c *gin.Context) {
 	}
 
 	util.Success(c, gin.H{
-		"access_token": newSession.AccessToken,
-		"expires_at":   newSession.ExpiresAt,
+		"expires_at": newSession.ExpiresAt,
 	})
 }

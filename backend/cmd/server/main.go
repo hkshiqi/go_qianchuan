@@ -18,7 +18,9 @@ import (
 	"github.com/CriarBrand/qianchuan-backend/internal/middleware"
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
+	"github.com/CriarBrand/qianchuan-backend/internal/tokenmanager"
 	"github.com/CriarBrand/qianchuan-backend/internal/util"
+	"github.com/CriarBrand/qianchuan-backend/pkg/tokenstore"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/memstore"
 	"github.com/gin-gonic/gin"
@@ -76,6 +78,19 @@ func main() {
 func buildRouter(appID int64, appSecret string) *gin.Engine {
 	client := sdk.NewOceanengineClient(appID, appSecret)
 	qianchuanService := service.NewQianchuanService(client, appID, appSecret)
+	tokenStore, err := tokenstore.New(envString("TOKEN_STORE_PATH", "data/tokens.json"), envString("TOKEN_ENCRYPTION_KEY", ""))
+	if err != nil {
+		log.Fatalf("initialize token store: %v", err)
+	}
+	tokenManager, err := tokenmanager.New(client, tokenStore)
+	if err != nil {
+		log.Fatalf("initialize token manager: %v", err)
+	}
+	qianchuanService.TokenManager = tokenManager
+	qianchuanService.DefaultAdvertiserID = envInt64("QIANCHUAN_DEFAULT_ADVERTISER_ID", 0)
+	qianchuanService.DefaultAwemeID = envInt64("QIANCHUAN_DEFAULT_AWEME_ID", 0)
+	qianchuanService.DefaultLiveRoomID = envInt64("QIANCHUAN_DEFAULT_LIVE_ROOM_ID", 0)
+	operationsWriteEnabled := envBool("OPERATIONS_WRITE_ENABLED", false)
 
 	authHandler := handler.NewAuthHandler(qianchuanService)
 	accessHandler := handler.NewAccessHandler()
@@ -93,6 +108,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	uniPromotionHandler := handler.NewUniPromotionHandler(qianchuanService)
 	activityHandler := handler.NewActivityHandler()
 	webhookHandler := handler.NewWebhookHandler()
+	mcpHandler := handler.NewMCPHandler(qianchuanService, envString("MCP_API_KEY", ""), operationsWriteEnabled)
 
 	router := gin.New()
 	router.Use(gin.Recovery(), middleware.Trace(), middleware.Logger(), middleware.Metrics())
@@ -132,9 +148,13 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	api.POST("/access/logout", accessHandler.Logout)
 	api.POST("/oauth/exchange", authHandler.OAuthExchange)
 	api.POST("/auth/refresh", middleware.AccessRequired(), authHandler.RefreshSession)
+	registerMCPRoutes(api, mcpHandler)
 
 	protected := api.Group("")
 	protected.Use(middleware.AccessRequired(), middleware.AuthRequired(), middleware.AutoRefreshToken(qianchuanService), middleware.CSRFProtection())
+	if !operationsWriteEnabled {
+		protected.Use(middleware.WriteGuard(false, operationReadOnlyPOSTPaths...))
+	}
 
 	protected.GET("/user/info", authHandler.GetUserInfo)
 	protected.POST("/auth/logout", authHandler.Logout)
@@ -265,10 +285,58 @@ func registerUniPromotionRoutes(group *gin.RouterGroup, h *handler.UniPromotionH
 	group.POST("/qianchuan/uni-promotion/ad/budget/update", h.UpdateBudget)
 	group.POST("/qianchuan/uni-promotion/ad/roi-goal/update", h.UpdateROIGoal)
 	group.POST("/qianchuan/uni-promotion/ad/schedule-date/update", h.UpdateScheduleTime)
-	group.GET("/qianchuan/uni-promotion/material/get", h.UpdateBudgetSchedule)
+	group.GET("/qianchuan/uni-promotion/material/get", h.GetMaterials)
 	group.POST("/qianchuan/uni-promotion/material/delete", h.UpdateMaterial)
+	group.POST("/qianchuan/uni-promotion/material/add-existing", h.AddExistingMaterial)
 	group.GET("/qianchuan/uni-promotion/aweme/authorized", h.GetBudgetSchedule)
 	group.POST("/qianchuan/uni-promotion/auth-init", h.UpdateAuth)
+}
+
+func registerMCPRoutes(group *gin.RouterGroup, h *handler.MCPHandler) {
+	mcp := group.Group("/mcp")
+	mcp.Use(h.RequireAPIKey)
+	mcp.GET("/status", h.Status)
+	mcp.GET("/plans", h.Plans)
+	mcp.GET("/plans/:ad_id", h.PlanDetail)
+	mcp.GET("/plans/:ad_id/materials", h.PlanMaterials)
+	mcp.POST("/material-report", h.MaterialReport)
+	mcp.GET("/live-overview", h.LiveOverview)
+
+	for _, route := range []string{
+		"/plans/create",
+		"/plans/:ad_id/budget",
+		"/plans/:ad_id/roi",
+		"/plans/:ad_id/pause",
+		"/plans/:ad_id/materials/remove",
+		"/plans/:ad_id/materials/add-existing",
+	} {
+		mcp.POST(route, h.WriteDisabled)
+	}
+}
+
+var operationReadOnlyPOSTPaths = []string{
+	"/api/auth/logout",
+	"/api/qianchuan/report/advertiser/get",
+	"/api/qianchuan/report/campaign/get",
+	"/api/qianchuan/report/ad/get",
+	"/api/qianchuan/report/creative/get",
+	"/api/qianchuan/report/material/get",
+	"/api/qianchuan/report/search-word/get",
+	"/api/qianchuan/report/video-user-lose/get",
+	"/api/qianchuan/tools/interest/keyword",
+	"/api/qianchuan/tools/action/category",
+	"/api/qianchuan/tools/action/keyword",
+	"/api/qianchuan/tools/aweme/category",
+	"/api/qianchuan/tools/aweme/author",
+	"/api/qianchuan/tools/creative/word",
+	"/api/qianchuan/keyword/recommend",
+	"/api/qianchuan/keyword/compliance/check",
+	"/api/qianchuan/ad/suggest-bid",
+	"/api/qianchuan/ad/suggest-budget",
+	"/api/qianchuan/ad/suggest-roi-goal",
+	"/api/qianchuan/ad/estimate-effect",
+	"/api/qianchuan/aweme/suggest/bid",
+	"/api/qianchuan/aweme/estimate",
 }
 
 func registerUnsupportedRoutes(group *gin.RouterGroup) {
@@ -359,6 +427,18 @@ func envBool(key string, fallback bool) bool {
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
+	}
+	return parsed
+}
+
+func envInt64(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		log.Fatalf("%s must be a valid integer", key)
 	}
 	return parsed
 }

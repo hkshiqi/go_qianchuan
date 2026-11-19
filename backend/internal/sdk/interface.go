@@ -60,6 +60,7 @@ type QianchuanClient interface {
 	AdvertiserReport(ctx context.Context, req AdvertiserReportReq) (*AdvertiserReportRes, error)
 	ReportAdGet(ctx context.Context, req ReportAdGetReq) (*ReportAdGetRes, error)
 	ReportCreativeGet(ctx context.Context, req ReportCreativeGetReq) (*ReportCreativeGetRes, error)
+	ReportMaterialGet(ctx context.Context, req ReportMaterialGetReq) (*ReportMaterialGetRes, error)
 
 	// ===== Tools =====
 	ToolsIndustryGet(ctx context.Context, req ToolsIndustryGetReq) (*ToolsIndustryGetRes, error)
@@ -119,6 +120,7 @@ type QianchuanClient interface {
 	UniPromotionRoiGoalUpdate(ctx context.Context, req UniPromotionRoiGoalUpdateReq) (*UniPromotionRoiGoalUpdateRes, error)
 	UniPromotionScheduleUpdate(ctx context.Context, req UniPromotionScheduleUpdateReq) (*UniPromotionScheduleUpdateRes, error)
 	UniPromotionMaterialGet(ctx context.Context, req UniPromotionMaterialGetReq) (*UniPromotionMaterialGetRes, error)
+	UniPromotionMaterialAdd(ctx context.Context, req UniPromotionMaterialAddReq) (*UniPromotionMaterialAddRes, error)
 	UniPromotionMaterialDelete(ctx context.Context, req UniPromotionMaterialDeleteReq) (*UniPromotionMaterialDeleteRes, error)
 	UniPromotionAuthorizedGet(ctx context.Context, req UniPromotionAuthorizedGetReq) (*UniPromotionAuthorizedGetRes, error)
 	UniPromotionAuthInit(ctx context.Context, req UniPromotionAuthInitReq) (*UniPromotionAuthInitRes, error)

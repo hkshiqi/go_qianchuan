@@ -740,6 +740,37 @@ type ReportCreativeGetRes struct {
 	} `json:"data"`
 }
 
+type ReportMaterialGetReq struct {
+	AccessToken     string                     `json:"-"`
+	AdvertiserId    int64                      `json:"advertiser_id"`
+	StartDate       string                     `json:"start_date"`
+	EndDate         string                     `json:"end_date"`
+	Page            int64                      `json:"page"`
+	PageSize        int64                      `json:"page_size"`
+	Fields          []string                   `json:"fields,omitempty"`
+	Filtering       *ReportMaterialGetFiltering `json:"filtering,omitempty"`
+	TimeGranularity string                     `json:"time_granularity,omitempty"`
+	OrderField      string                     `json:"order_field,omitempty"`
+	OrderType       string                     `json:"order_type,omitempty"`
+}
+
+type ReportMaterialGetFiltering struct {
+	AdIds         []int64 `json:"ad_ids,omitempty"`
+	MaterialId    []int64 `json:"material_id,omitempty"`
+	MarketingGoal string  `json:"marketing_goal,omitempty"`
+	MaterialType  string  `json:"material_type,omitempty"`
+	AnalysisType  []string `json:"analysis_type,omitempty"`
+}
+
+type ReportMaterialGetRes struct {
+	Code    int64  `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		List     []interface{} `json:"list"`
+		PageInfo PageInfo      `json:"page_info"`
+	} `json:"data"`
+}
+
 // ===== Tools Types =====
 
 type ToolsIndustryGetReq struct {
@@ -1320,20 +1351,33 @@ type UniPromotion struct {
 	EndTime       string  `json:"end_time"`
 	CreateTime    string  `json:"create_time"`
 	ModifyTime    string  `json:"modify_time"`
+	SmartBidType  string  `json:"smart_bid_type,omitempty"`
+	StatCost      float64 `json:"stat_cost"`
+	PayOrderCount float64 `json:"total_pay_order_count_for_roi2"`
+	PayOrderGMV   float64 `json:"total_pay_order_gmv_for_roi2"`
+	PayOrderROI   float64 `json:"total_prepay_and_pay_order_roi2"`
 }
 
 type UniPromotionListReq struct {
-	AccessToken  string                     `json:"-"`
-	AdvertiserId uint64                     `json:"advertiser_id"`
-	Page         int                        `json:"page,omitempty"`
-	PageSize     int                        `json:"page_size,omitempty"`
-	Filtering    *UniPromotionListFiltering `json:"filtering,omitempty"`
+	AccessToken   string                     `json:"-"`
+	AdvertiserId  uint64                     `json:"advertiser_id"`
+	StartTime     string                     `json:"start_time,omitempty"`
+	EndTime       string                     `json:"end_time,omitempty"`
+	MarketingGoal string                     `json:"marketing_goal,omitempty"`
+	Fields        []string                   `json:"fields,omitempty"`
+	OrderField    string                     `json:"order_field,omitempty"`
+	OrderType     string                     `json:"order_type,omitempty"`
+	Page          int                        `json:"page,omitempty"`
+	PageSize      int                        `json:"page_size,omitempty"`
+	Filtering     *UniPromotionListFiltering `json:"filtering,omitempty"`
 }
 
 type UniPromotionListFiltering struct {
 	Status        string   `json:"status,omitempty"`
 	MarketingGoal string   `json:"marketing_goal,omitempty"`
 	AdIds         []uint64 `json:"ad_ids,omitempty"`
+	AdName        string   `json:"ad_name,omitempty"`
+	SmartBidType  string   `json:"smart_bid_type,omitempty"`
 }
 
 type UniPromotionListRes struct {
@@ -1380,9 +1424,11 @@ type UniPromotionCreateReq struct {
 }
 
 type UniPromotionMaterial struct {
-	VideoId   string `json:"video_id,omitempty"`
-	ImageId   string `json:"image_id,omitempty"`
-	ImageMode string `json:"image_mode,omitempty"`
+	VideoId      string `json:"video_id,omitempty"`
+	VideoCoverId string `json:"video_cover_id,omitempty"`
+	AwemeItemId  uint64 `json:"aweme_item_id,omitempty"`
+	ImageId      string `json:"image_id,omitempty"`
+	ImageMode    string `json:"image_mode,omitempty"`
 }
 
 type UniPromotionCreateRes struct {
@@ -1423,9 +1469,17 @@ type UniPromotionStatusUpdateRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		AdIds  []uint64              `json:"ad_ids"`
-		Errors []UniPromotionOpError `json:"errors,omitempty"`
+		Results []UniPromotionStatusResult `json:"results,omitempty"`
+		AdIds   []uint64                    `json:"ad_ids,omitempty"`
+		Errors  []UniPromotionOpError       `json:"errors,omitempty"`
 	} `json:"data"`
+}
+
+type UniPromotionStatusResult struct {
+	AdId         uint64 `json:"ad_id"`
+	Success      bool   `json:"success"`
+	ErrorCode    int64  `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 type UniPromotionOpError struct {
@@ -1486,9 +1540,10 @@ type UniPromotionScheduleUpdateReq struct {
 }
 
 type UniPromotionScheduleUpdateItem struct {
-	AdId      uint64 `json:"ad_id"`
-	StartTime string `json:"start_time,omitempty"`
-	EndTime   string `json:"end_time,omitempty"`
+	AdId         uint64 `json:"ad_id"`
+	ScheduleType string `json:"schedule_type,omitempty"`
+	StartTime    string `json:"start_time,omitempty"`
+	EndTime      string `json:"end_time,omitempty"`
 }
 
 type UniPromotionScheduleUpdateRes struct {
@@ -1500,23 +1555,84 @@ type UniPromotionScheduleUpdateRes struct {
 }
 
 type UniPromotionMaterialGetReq struct {
-	AccessToken  string `json:"-"`
-	AdvertiserId uint64 `json:"advertiser_id"`
-	AdId         uint64 `json:"ad_id"`
+	AccessToken        string   `json:"-"`
+	AdvertiserId       uint64   `json:"advertiser_id"`
+	AdId               uint64   `json:"ad_id"`
+	MaterialType       string   `json:"material_type,omitempty"`
+	VideoType          string   `json:"video_type,omitempty"`
+	Status             string   `json:"material_status,omitempty"`
+	MaterialSelectType string   `json:"material_select_type,omitempty"`
+	AnalysisType       []string `json:"analysis_type,omitempty"`
+	Page               int      `json:"page,omitempty"`
+	PageSize           int      `json:"page_size,omitempty"`
+	Fields             []string `json:"fields,omitempty"`
+	OrderField         string   `json:"order_field,omitempty"`
+	OrderType          string   `json:"order_type,omitempty"`
+	StartDate          string   `json:"start_date,omitempty"`
+	EndDate            string   `json:"end_date,omitempty"`
 }
 
 type UniPromotionMaterialGetRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		Materials []interface{} `json:"materials"`
+		Materials []UniPromotionMaterialInfo `json:"materials"`
+		PageInfo  PageInfo                   `json:"page_info"`
 	} `json:"data"`
+}
+
+type UniPromotionMaterialInfo struct {
+	MaterialId        uint64   `json:"material_id"`
+	VideoId           string   `json:"video_id,omitempty"`
+	VideoCoverId      string   `json:"video_cover_id,omitempty"`
+	AwemeItemId       uint64   `json:"aweme_item_id,omitempty"`
+	ImageId           string   `json:"image_id,omitempty"`
+	ImageMode         string   `json:"image_mode,omitempty"`
+	MaterialName      string   `json:"material_name,omitempty"`
+	MaterialType      string   `json:"material_type,omitempty"`
+	MaterialStatus    string   `json:"material_status,omitempty"`
+	AuditStatus       string   `json:"audit_status,omitempty"`
+	IsDeleted         bool     `json:"is_delete,omitempty"`
+	DeliveryNotReason []string `json:"delivery_not_reason,omitempty"`
+	CoverImage        string   `json:"cover_image,omitempty"`
+	ProductId         uint64   `json:"product_id,omitempty"`
+	ProductName       string   `json:"product_name,omitempty"`
+	StatCost          float64  `json:"stat_cost,omitempty"`
+	ShowCnt           int64    `json:"show_cnt,omitempty"`
+	ClickCnt          int64    `json:"click_cnt,omitempty"`
+	ConvertCnt        int64    `json:"convert_cnt,omitempty"`
+	Ctr               float64  `json:"ctr,omitempty"`
+	ConversionRate    float64  `json:"conversion_rate,omitempty"`
+	PayOrderAmount    float64  `json:"pay_order_amount,omitempty"`
+	Gpm               float64  `json:"gpm,omitempty"`
+	Roi2              float64  `json:"roi2,omitempty"`
+	LiveShowCount     int64    `json:"live_show_count,omitempty"`
+	LiveWatchCount    int64    `json:"live_watch_count,omitempty"`
+	LiveCtr           float64  `json:"live_ctr,omitempty"`
+	LiveConversionRate float64 `json:"live_conversion_rate,omitempty"`
+	LiveShowCountExcludeVideo      int64   `json:"live_show_count_exclude_video,omitempty"`
+	LiveWatchCountExcludeVideo     int64   `json:"live_watch_count_exclude_video,omitempty"`
+	LiveCtrExcludeVideo            float64 `json:"live_ctr_exclude_video,omitempty"`
+	LiveConversionRateExcludeVideo float64 `json:"live_conversion_rate_exclude_video,omitempty"`
+}
+
+type UniPromotionMaterialAddReq struct {
+	AccessToken  string                 `json:"-"`
+	AdvertiserId uint64                 `json:"advertiser_id"`
+	AdId         uint64                 `json:"ad_id"`
+	VideoMaterial []UniPromotionMaterial `json:"video_material"`
+}
+
+type UniPromotionMaterialAddRes struct {
+	Code    int64  `json:"code"`
+	Message string `json:"message"`
 }
 
 type UniPromotionMaterialDeleteReq struct {
 	AccessToken  string   `json:"-"`
 	AdvertiserId uint64   `json:"advertiser_id"`
 	AdId         uint64   `json:"ad_id"`
+	MaterialType string   `json:"material_type,omitempty"`
 	MaterialIds  []uint64 `json:"material_ids,omitempty"`
 	Titles       []string `json:"titles,omitempty"`
 }
