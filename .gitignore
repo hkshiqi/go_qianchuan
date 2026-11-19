@@ -25,6 +25,8 @@ yarn-error.log*
 *.tmp
 *.temp
 .cache/
+backups/
+*.bundle
 
 # Build artifacts (子目录有自己的gitignore)
 dist/
