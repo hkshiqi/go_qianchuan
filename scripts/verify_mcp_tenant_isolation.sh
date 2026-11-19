@@ -73,7 +73,13 @@ encryption_key="$(sed -n 's/^TENANT_ENCRYPTION_KEY=//p' "$BACKEND_ROOT/.env" | t
 [[ -n "$encryption_key" ]] || fail "TENANT_ENCRYPTION_KEY is missing"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/qianchuan-isolation.XXXXXX")"
+test_port="${TEST_PORT:-18082}"
+test_pid=""
 cleanup() {
+  if [[ -n "$test_pid" ]]; then
+    kill "$test_pid" 2>/dev/null || true
+    wait "$test_pid" 2>/dev/null || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -93,10 +99,32 @@ create_tenant() {
 create_tenant isolation-a 900000001
 create_tenant isolation-b 900000002
 
+(
+  cd "$BACKEND_ROOT"
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+  export PORT="$test_port"
+  export TENANT_STORE_PATH="$work/tenants.json"
+  export TOKEN_STORE_PATH="$work/tokens.json"
+  exec "$BACKEND_ROOT/bin/qianchuan-server"
+) >"$work/server.log" 2>&1 &
+test_pid="$!"
+
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:$test_port/healthz" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+curl -fsS "http://127.0.0.1:$test_port/healthz" >/dev/null ||
+  fail "temporary isolation server failed to start; see $work/server.log"
+
 call_status() {
   local key
   key="$(tr -d '\r\n' < "$1")"
-  curl -sS -X POST "$BASE_URL/mcp" \
+  curl -sS -X POST "http://127.0.0.1:$test_port/mcp" \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $key" \
     --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"qianchuan_get_status","arguments":{}}}'
