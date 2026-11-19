@@ -1,8 +1,13 @@
 package session
 
 import (
+	"encoding/gob"
 	"time"
 )
+
+func init() {
+	gob.Register(&UserSession{})
+}
 
 // UserSession 用户会话信息
 // 使用int64存储Unix时间戳以解决cookie序列化问题
