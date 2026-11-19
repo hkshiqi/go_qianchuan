@@ -45,9 +45,9 @@ func (h *MCPHandler) RequireAPIKey(c *gin.Context) {
 
 func (h *MCPHandler) Status(c *gin.Context) {
 	util.Success(c, gin.H{
-		"advertiser_id":  h.service.DefaultAdvertiserID,
-		"aweme_id":       h.service.DefaultAwemeID,
-		"live_room_id":   h.service.DefaultLiveRoomID,
+		"advertiser_id":  strconv.FormatInt(h.service.DefaultAdvertiserID, 10),
+		"aweme_id":       strconv.FormatInt(h.service.DefaultAwemeID, 10),
+		"live_room_id":   strconv.FormatInt(h.service.DefaultLiveRoomID, 10),
 		"read_enabled":   true,
 		"write_enabled":  h.writeEnabled,
 	})
@@ -318,9 +318,9 @@ func (h *MCPHandler) LiveOverview(c *gin.Context) {
 		return
 	}
 	util.Success(c, gin.H{
-		"advertiser_id": advertiserID,
-		"aweme_id":      h.service.DefaultAwemeID,
-		"live_room_id":  h.service.DefaultLiveRoomID,
+		"advertiser_id": strconv.FormatInt(advertiserID, 10),
+		"aweme_id":      strconv.FormatInt(h.service.DefaultAwemeID, 10),
+		"live_room_id":  strconv.FormatInt(h.service.DefaultLiveRoomID, 10),
 		"data":          response.Data,
 		"refreshed_at":  now.Unix(),
 	})
