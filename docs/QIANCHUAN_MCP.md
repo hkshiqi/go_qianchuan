@@ -63,7 +63,35 @@ aweme_id=63307887035
 live_room_id=7709635958206991154
 ```
 
-授权完成后，Token Manager 会把可刷新凭证用 AES-256-GCM 加密写入 `/opt/go-qianchuan/data/tokens.json`，文件权限固定为 `600`。文件只保存 nonce 与 ciphertext，不保存明文 access token 或 refresh token。
+授权完成后，Token Manager 会把可刷新凭证用 AES-256-GCM 加密写入该租户独占的 `/opt/go-qianchuan/data/tenants/<tenant>/tokens.json`，目录权限固定为 `700`，文件权限固定为 `600`。文件只保存 nonce 与 ciphertext，不保存明文 access token 或 refresh token。不同租户不会读取或覆盖彼此的凭证文件。
+
+## 租户管理
+
+管理员在服务器运行 `qianchuan-tenant`。创建时生成一次性显示的随机 Key，只保存其 HMAC-SHA256 摘要：
+
+```bash
+/opt/go-qianchuan/backend/bin/qianchuan-tenant create \
+  --id operator-a \
+  --name "运营A" \
+  --advertiser-id 123456789012345 \
+  --aweme-id 63307887035 \
+  --live-room-id 7709635958206991154 \
+  --key-file /opt/go-qianchuan/tenants/operator-a.key
+```
+
+将 Key 文件通过私密渠道交给对应调用人，然后从服务器上删除临时导入文件；服务端只需要租户存储中的 Key 摘要。撤回访问权限：
+
+```bash
+/opt/go-qianchuan/backend/bin/qianchuan-tenant delete --id operator-a
+```
+
+删除会同时吊销该 Key、解除广告主绑定并清理该租户的 Token 目录。查看租户绑定：
+
+```bash
+/opt/go-qianchuan/backend/bin/qianchuan-tenant list
+```
+
+同一广告主的多个运营人员共用同一租户 Key；不同广告主必须分别创建租户。需要独立审计时，应分别创建不同广告主的租户，而不是让多人共用一个通用 Key。
 
 ## 写操作边界
 

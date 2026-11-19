@@ -21,8 +21,11 @@ import (
 var ErrTenantAccountMismatch = errors.New("OAuth account does not match tenant binding")
 
 type TenantRuntime struct {
-	service *service.QianchuanService
-	tools   *Tools
+	service      *service.QianchuanService
+	tools        *Tools
+	advertiserID int64
+	awemeID      int64
+	liveRoomID   int64
 }
 
 type TenantFactory struct {
@@ -149,7 +152,12 @@ func (f *TenantFactory) runtimeFor(tenant tenantstore.Tenant) (*TenantRuntime, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if runtime, ok := f.runtimes[tenantID]; ok {
-		return runtime, nil
+		if runtime.advertiserID == tenant.AdvertiserID &&
+			runtime.awemeID == tenant.AwemeID &&
+			runtime.liveRoomID == tenant.LiveRoomID {
+			return runtime, nil
+		}
+		delete(f.runtimes, tenantID)
 	}
 	path, err := f.TokenStorePath(tenantID)
 	if err != nil {
@@ -176,7 +184,13 @@ func (f *TenantFactory) runtimeFor(tenant tenantstore.Tenant) (*TenantRuntime, e
 	tools.tenant = TenantIdentity{ID: tenantID}
 	tools.authURLBuilder = f.authorizationURL
 	tools.tokenStorePath = path
-	runtime := &TenantRuntime{service: runtimeService, tools: tools}
+	runtime := &TenantRuntime{
+		service:      runtimeService,
+		tools:        tools,
+		advertiserID: tenant.AdvertiserID,
+		awemeID:      tenant.AwemeID,
+		liveRoomID:   tenant.LiveRoomID,
+	}
 	f.runtimes[tenantID] = runtime
 	return runtime, nil
 }
