@@ -1,24 +1,26 @@
 package mcp
 
 type Status struct {
-	TenantID            string   `json:"tenant_id"`
-	TenantName          string   `json:"tenant_name"`
-	Service            string   `json:"service"`
-	ProtocolVersion    string   `json:"protocol_version"`
-	Authenticated      bool     `json:"authenticated"`
-	AdvertiserID       string   `json:"advertiser_id"`
-	AwemeID            string   `json:"aweme_id"`
-	LiveRoomID         string   `json:"live_room_id"`
-	ReadEnabled        bool     `json:"read_enabled"`
-	WriteEnabled       bool     `json:"write_enabled"`
-	AuthorizationURL   string   `json:"authorization_url,omitempty"`
-	Capabilities       []string `json:"capabilities"`
-	WriteCapabilities  []string `json:"write_capabilities"`
-	OperationMode      string   `json:"operation_mode"`
-	RestartRequired    bool     `json:"restart_required"`
-	TokenEncrypted     bool     `json:"token_encrypted"`
-	TokenStorePresent  bool     `json:"token_store_present"`
-	WriteEnabledReason string   `json:"write_enabled_reason"`
+	TenantID                 string              `json:"tenant_id"`
+	TenantName               string              `json:"tenant_name"`
+	Service                  string              `json:"service"`
+	ProtocolVersion          string              `json:"protocol_version"`
+	Authenticated            bool                `json:"authenticated"`
+	AdvertiserID             string              `json:"advertiser_id"`
+	AwemeID                  string              `json:"aweme_id"`
+	LiveRoomID               string              `json:"live_room_id"`
+	Accounts                 []map[string]string `json:"accounts"`
+	AccountSelectionRequired bool `json:"account_selection_required"`
+	ReadEnabled              bool                `json:"read_enabled"`
+	WriteEnabled             bool                `json:"write_enabled"`
+	AuthorizationURL         string              `json:"authorization_url,omitempty"`
+	Capabilities             []string            `json:"capabilities"`
+	WriteCapabilities        []string            `json:"write_capabilities"`
+	OperationMode            string              `json:"operation_mode"`
+	RestartRequired          bool                `json:"restart_required"`
+	TokenEncrypted           bool                `json:"token_encrypted"`
+	TokenStorePresent        bool                `json:"token_store_present"`
+	WriteEnabledReason       string              `json:"write_enabled_reason"`
 }
 
 type MaterialMetrics struct {

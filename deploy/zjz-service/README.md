@@ -6,7 +6,7 @@
 - Nginx：监听宿主机 `8080`，静态站点为 `/opt/go-qianchuan/frontend/dist`
 - Go 后端：systemd `qianchuan-backend.service`，监听 `127.0.0.1:18081`
 - MCP 公网入口：`https://dkl4ii67.zjz-service.cn/mcp`
-- MCP 租户隔离：每个使用人一把独立 Bearer Key，绑定唯一的广告主、抖音号和直播间
+- MCP 租户隔离：每个使用人一把独立 Bearer Key，可绑定多个投放账户；调用时用 `account_id` 选择
 - 访问控制：`/access` 页面使用 `APP_ACCESS_USERNAME` 和 `APP_ACCESS_PASSWORD_SHA256`，Session 保存在服务端内存
 - OAuth 回调需要跨站携带访问 Session，因此生产环境使用 `COOKIE_SECURE=true`、`COOKIE_SAME_SITE=none`
 - Nginx 将 `/api/`、`/health`、`/ready`、`/metrics` 和 `/swagger/` 转发到 Go 后端
@@ -46,7 +46,17 @@ install -d -m 0700 /opt/go-qianchuan/tenants
 chmod 600 /opt/go-qianchuan/tenants/owner.key
 ```
 
-广告主只能绑定一个租户；同一广告主的管理员需要共用同一个租户 Key。不同用户管理不同广告主时，分别创建租户，不能通过 MCP 参数切换 `advertiser_id`。
+广告主只能绑定一个租户。同一个人管理多个广告主时，把多个账户加到同一租户，用 `account_id` 逐请求切换；不能通过 MCP 参数指定 `advertiser_id` 或 `tenant_id`。
+
+```bash
+/opt/go-qianchuan/backend/bin/qianchuan-tenant add-account \
+  --id owner \
+  --advertiser-id 223456789012345 \
+  --aweme-id 63307887035 \
+  --live-room-id 7709635958206991154
+```
+
+多账户客户端先调用 `qianchuan_list_accounts`，随后给账户类工具传选中的 `account_id`。多账户未传会拒绝执行，不会默认第一个账户。OAuth 链接按账户生成，每个账户需分别授权；一次授权只写所选账户的 Token。
 
 ## MCP 客户端
 

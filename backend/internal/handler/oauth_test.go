@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -18,7 +19,8 @@ import (
 
 type oauthTestClient struct {
 	sdk.QianchuanClient
-	advertiserID int64
+	advertiserID  int64
+	advertiserIDs []int64
 }
 
 func (c oauthTestClient) OauthAccessToken(context.Context, sdk.OauthAccessTokenReq) (*sdk.OauthAccessTokenRes, error) {
@@ -30,6 +32,7 @@ func (c oauthTestClient) OauthAccessToken(context.Context, sdk.OauthAccessTokenR
 			ExpiresIn:             3600,
 			RefreshTokenExpiresIn: 3600,
 			AdvertiserId:          c.advertiserID,
+			AdvertiserIds:         c.advertiserIDs,
 		},
 	}, nil
 }
@@ -84,6 +87,44 @@ func TestOAuthCallbackRejectsInvalidState(t *testing.T) {
 	}
 }
 
+func TestAccountScopedOAuthPersistsOnlySelectedAccount(t *testing.T) {
+	handler, state, factory, tenant := testOAuthMultiAccountHandler(t)
+	handler.Callback(oauthContext(t, state))
+
+	path, err := factory.TokenStorePath(tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytesContains(raw, []byte(`"1001"`)) {
+		t.Fatal("unselected account 1001 was persisted")
+	}
+	if !bytesContains(raw, []byte(`"1002"`)) {
+		t.Fatal("selected account 1002 was not persisted")
+	}
+}
+
+func TestOAuthStateForForeignAccountIsRejected(t *testing.T) {
+	handler, state, factory, tenant := testOAuthForeignAccountHandler(t)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/auth/callback?state="+state+"&auth_code=test-code", nil)
+	handler.Callback(context)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	path, err := factory.TokenStorePath(tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign account persisted a token: %v", err)
+	}
+}
+
 func testOAuthHandler(
 	t *testing.T,
 	boundAdvertiserID,
@@ -133,6 +174,86 @@ func testOAuthHandler(
 		states,
 		factory,
 	), state, factory, tenant
+}
+
+func testOAuthMultiAccountHandler(t *testing.T) (*OAuthHandler, string, *mcp.TenantFactory, *tenantstore.Tenant) {
+	t.Helper()
+	handler, factory, tenant := buildOAuthTestHandler(t, oauthTestClient{
+		advertiserID:  1001,
+		advertiserIDs: []int64{1001, 1002},
+	})
+	state, err := handler.states.IssueForAccount(tenant.ID, 1002)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, state, factory, tenant
+}
+
+func testOAuthForeignAccountHandler(t *testing.T) (*OAuthHandler, string, *mcp.TenantFactory, *tenantstore.Tenant) {
+	t.Helper()
+	handler, factory, tenant := buildOAuthTestHandler(t, oauthTestClient{
+		advertiserID:  1001,
+		advertiserIDs: []int64{1001, 9999},
+	})
+	state, err := handler.states.IssueForAccount(tenant.ID, 9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, state, factory, tenant
+}
+
+func buildOAuthTestHandler(
+	t *testing.T,
+	client oauthTestClient,
+) (*OAuthHandler, *mcp.TenantFactory, *tenantstore.Tenant) {
+	t.Helper()
+	dataDir := t.TempDir()
+	tenants, err := tenantstore.New(
+		filepath.Join(dataDir, "tenants.json"),
+		"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := &tenantstore.Tenant{
+		ID:           "owner",
+		Name:         "owner",
+		AdvertiserID: 1001,
+		Accounts: []tenantstore.AccountBinding{
+			{AdvertiserID: 1001},
+			{AdvertiserID: 1002},
+		},
+	}
+	if err := tenants.Register(*tenant, "owner-key-012345678901234567890123456"); err != nil {
+		t.Fatal(err)
+	}
+	states := authstate.New(0)
+	factory, err := mcp.NewTenantFactory(mcp.TenantFactoryOptions{
+		Client:                client,
+		AppID:                 123,
+		AppSecret:             "test-secret",
+		TokenRoot:             filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey:    "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState:        states.Issue,
+		IssueAccountAuthState: states.IssueForAccount,
+		OAuthAuthorizationURL: "https://example.test/oauth/authorize",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewOAuthHandler(
+		client,
+		123,
+		"https://example.test/auth/callback",
+		tenants,
+		states,
+		factory,
+	)
+	return handler, factory, tenant
+}
+
+func bytesContains(haystack, needle []byte) bool {
+	return bytes.Index(haystack, needle) >= 0
 }
 
 func oauthContext(t *testing.T, state string) *gin.Context {

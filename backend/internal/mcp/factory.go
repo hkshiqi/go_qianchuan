@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -21,11 +22,9 @@ import (
 var ErrTenantAccountMismatch = errors.New("OAuth account does not match tenant binding")
 
 type TenantRuntime struct {
-	service      *service.QianchuanService
-	tools        *Tools
-	advertiserID int64
-	awemeID      int64
-	liveRoomID   int64
+	service  *service.QianchuanService
+	tools    *Tools
+	accounts []tenantstore.AccountBinding
 }
 
 type TenantFactory struct {
@@ -37,19 +36,21 @@ type TenantFactory struct {
 	writeEnabled       bool
 	oauthAuthorization string
 	states             func(tenantID string) (string, error)
+	accountStates      func(tenantID string, accountID int64) (string, error)
 	mu                 sync.Mutex
 	runtimes           map[string]*TenantRuntime
 }
 
 type TenantFactoryOptions struct {
-	Client              sdk.QianchuanClient
-	AppID               int64
-	AppSecret           string
-	TokenRoot           string
-	TokenEncryptionKey  string
-	WriteEnabled        bool
+	Client                sdk.QianchuanClient
+	AppID                 int64
+	AppSecret             string
+	TokenRoot             string
+	TokenEncryptionKey    string
+	WriteEnabled          bool
 	OAuthAuthorizationURL string
-	IssueAuthState      func(tenantID string) (string, error)
+	IssueAuthState        func(tenantID string) (string, error)
+	IssueAccountAuthState func(tenantID string, accountID int64) (string, error)
 }
 
 func NewTenantFactory(options TenantFactoryOptions) (*TenantFactory, error) {
@@ -62,7 +63,7 @@ func NewTenantFactory(options TenantFactoryOptions) (*TenantFactory, error) {
 	if options.TokenEncryptionKey == "" {
 		return nil, errors.New("token encryption key is required")
 	}
-	if options.IssueAuthState == nil {
+	if options.IssueAuthState == nil && options.IssueAccountAuthState == nil {
 		return nil, errors.New("OAuth state issuer is required")
 	}
 	return &TenantFactory{
@@ -74,6 +75,7 @@ func NewTenantFactory(options TenantFactoryOptions) (*TenantFactory, error) {
 		writeEnabled:       options.WriteEnabled,
 		oauthAuthorization: options.OAuthAuthorizationURL,
 		states:             options.IssueAuthState,
+		accountStates:      options.IssueAccountAuthState,
 		runtimes:           make(map[string]*TenantRuntime),
 	}, nil
 }
@@ -88,6 +90,7 @@ func (f *TenantFactory) ToolsFor(_ context.Context, tenant *tenantstore.Tenant) 
 	}
 	tools := *runtime.tools
 	tools.tenant = TenantIdentity{ID: tenant.ID, Name: tenant.Name}
+	tools.accounts = tenant.AccountList()
 	tools.authURLBuilder = f.authorizationURL
 	return &tools, nil
 }
@@ -96,11 +99,13 @@ func (f *TenantFactory) SaveOAuthSession(
 	ctx context.Context,
 	tenant tenantstore.Tenant,
 	oauthData *sdk.OauthAccessTokenResData,
+	accountID int64,
 ) error {
 	if oauthData == nil {
 		return errors.New("OAuth response is required")
 	}
-	if !containsAdvertiser(oauthData, tenant.AdvertiserID) {
+	matchedAccounts := matchingAdvertisers(oauthData, tenant.AccountList(), accountID)
+	if len(matchedAccounts) == 0 {
 		return ErrTenantAccountMismatch
 	}
 	runtime, err := f.runtimeFor(tenant)
@@ -110,14 +115,16 @@ func (f *TenantFactory) SaveOAuthSession(
 	if strings.TrimSpace(oauthData.AccessToken) == "" || strings.TrimSpace(oauthData.RefreshToken) == "" {
 		return errors.New("OAuth response is missing access or refresh token")
 	}
-	value := session.NewSessionFromTokenResponse(&session.TokenResponse{
-		AccessToken:           oauthData.AccessToken,
-		RefreshToken:          oauthData.RefreshToken,
-		ExpiresIn:             oauthData.ExpiresIn,
-		RefreshTokenExpiresIn: oauthData.RefreshTokenExpiresIn,
-	}, tenant.AdvertiserID)
-	if err := runtime.service.TokenManager.SaveToken(tenant.AdvertiserID, value); err != nil {
-		return fmt.Errorf("persist tenant OAuth session: %w", err)
+	for _, advertiserID := range matchedAccounts {
+		value := session.NewSessionFromTokenResponse(&session.TokenResponse{
+			AccessToken:           oauthData.AccessToken,
+			RefreshToken:          oauthData.RefreshToken,
+			ExpiresIn:             oauthData.ExpiresIn,
+			RefreshTokenExpiresIn: oauthData.RefreshTokenExpiresIn,
+		}, advertiserID)
+		if err := runtime.service.TokenManager.SaveToken(advertiserID, value); err != nil {
+			return fmt.Errorf("persist tenant OAuth session for %d: %w", advertiserID, err)
+		}
 	}
 	return nil
 }
@@ -129,8 +136,30 @@ func (f *TenantFactory) TokenStorePath(tenantID string) (string, error) {
 	return filepath.Join(f.tokenRoot, tenantID, "tokens.json"), nil
 }
 
-func (f *TenantFactory) authorizationURL(tenantID string) (string, error) {
-	state, err := f.states(tenantID)
+func (f *TenantFactory) authorizationURL(selector string) (string, error) {
+	var state string
+	var err error
+	tenantID, accountID := selector, int64(0)
+	if separator := strings.LastIndex(selector, "|"); separator > 0 {
+		tenantID = selector[:separator]
+		accountID, err = strconv.ParseInt(selector[separator+1:], 10, 64)
+		if err != nil || accountID <= 0 {
+			return "", errors.New("invalid account selector")
+		}
+	}
+	if err := validateTenantPath(tenantID); err != nil {
+		return "", err
+	}
+	if accountID > 0 {
+		if f.accountStates == nil {
+			return "", errors.New("account-scoped OAuth state issuer is unavailable")
+		}
+		state, err = f.accountStates(tenantID, accountID)
+	} else if f.states != nil {
+		state, err = f.states(tenantID)
+	} else {
+		err = errors.New("OAuth state issuer is unavailable")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -152,9 +181,7 @@ func (f *TenantFactory) runtimeFor(tenant tenantstore.Tenant) (*TenantRuntime, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if runtime, ok := f.runtimes[tenantID]; ok {
-		if runtime.advertiserID == tenant.AdvertiserID &&
-			runtime.awemeID == tenant.AwemeID &&
-			runtime.liveRoomID == tenant.LiveRoomID {
+		if sameAccounts(runtime.accounts, tenant.AccountList()) {
 			return runtime, nil
 		}
 		delete(f.runtimes, tenantID)
@@ -176,20 +203,15 @@ func (f *TenantFactory) runtimeFor(tenant tenantstore.Tenant) (*TenantRuntime, e
 	}
 	runtimeService := service.NewQianchuanService(f.client, f.appID, f.appSecret)
 	runtimeService.TokenManager = manager
-	runtimeService.DefaultAdvertiserID = tenant.AdvertiserID
-	runtimeService.DefaultAwemeID = tenant.AwemeID
-	runtimeService.DefaultLiveRoomID = tenant.LiveRoomID
-
 	tools := NewTools(runtimeService, f.writeEnabled, "")
 	tools.tenant = TenantIdentity{ID: tenantID}
+	tools.accounts = tenant.AccountList()
 	tools.authURLBuilder = f.authorizationURL
 	tools.tokenStorePath = path
 	runtime := &TenantRuntime{
-		service:      runtimeService,
-		tools:        tools,
-		advertiserID: tenant.AdvertiserID,
-		awemeID:      tenant.AwemeID,
-		liveRoomID:   tenant.LiveRoomID,
+		service:  runtimeService,
+		tools:    tools,
+		accounts: tenant.AccountList(),
 	}
 	f.runtimes[tenantID] = runtime
 	return runtime, nil
@@ -212,18 +234,48 @@ func validateTenantPath(tenantID string) error {
 }
 
 func containsAdvertiser(data *sdk.OauthAccessTokenResData, expected int64) bool {
-	if expected <= 0 {
-		return false
+	return len(matchingAdvertisers(data, []tenantstore.AccountBinding{{AdvertiserID: expected}}, 0)) > 0
+}
+
+func matchingAdvertisers(
+	data *sdk.OauthAccessTokenResData,
+	accounts []tenantstore.AccountBinding,
+	accountID int64,
+) []int64 {
+	if data == nil {
+		return nil
 	}
-	if data.AdvertiserId == expected {
-		return true
+	returned := make(map[int64]bool)
+	if data.AdvertiserId > 0 {
+		returned[data.AdvertiserId] = true
 	}
 	for _, id := range data.AdvertiserIds {
-		if id == expected {
-			return true
+		if id > 0 {
+			returned[id] = true
 		}
 	}
-	return false
+	matched := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		if accountID > 0 && account.AdvertiserID != accountID {
+			continue
+		}
+		if returned[account.AdvertiserID] {
+			matched = append(matched, account.AdvertiserID)
+		}
+	}
+	return matched
+}
+
+func sameAccounts(first, second []tenantstore.AccountBinding) bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for index := range first {
+		if first[index] != second[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TenantTokenRoot(tokenStorePath string) string {

@@ -52,3 +52,28 @@ func TestDiscardInvalidatesPendingState(t *testing.T) {
 		t.Fatal("discarded state was accepted")
 	}
 }
+
+func TestAccountScopedStatePreservesSelectedAccount(t *testing.T) {
+	store := New(0)
+	state, err := store.IssueForAccount("tenant-a", 2002)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantID, accountID, err := store.PeekAccount(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenantID != "tenant-a" || accountID != 2002 {
+		t.Fatalf("state context = %q/%d, want tenant-a/2002", tenantID, accountID)
+	}
+	tenantID, err = store.Consume(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenantID != "tenant-a" {
+		t.Fatalf("tenant = %q, want tenant-a", tenantID)
+	}
+	if _, _, err := store.PeekAccount(state); err == nil {
+		t.Fatal("consumed account-scoped state was reusable")
+	}
+}

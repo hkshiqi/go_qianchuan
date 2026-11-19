@@ -65,7 +65,7 @@ func (h *OAuthHandler) AuthorizationURL(c *gin.Context) {
 
 func (h *OAuthHandler) Callback(c *gin.Context) {
 	state := strings.TrimSpace(c.Query("state"))
-	tenantID, err := h.states.Peek(state)
+	tenantID, accountID, err := h.states.PeekAccount(state)
 	if err != nil {
 		h.renderResult(c, http.StatusBadRequest, "授权失败", "state 无效、过期或已使用")
 		return
@@ -100,7 +100,7 @@ func (h *OAuthHandler) Callback(c *gin.Context) {
 		fail(http.StatusBadGateway, "授权失败", "千川授权码交换失败")
 		return
 	}
-	if err := h.tokens.SaveOAuthSession(c.Request.Context(), *tenant, tokenResponse.Data); err != nil {
+	if err := h.tokens.SaveOAuthSession(c.Request.Context(), *tenant, tokenResponse.Data, accountID); err != nil {
 		if errors.Is(err, mcp.ErrTenantAccountMismatch) {
 			fail(http.StatusForbidden, "授权拒绝", "本次授权的广告主与租户绑定账户不一致")
 			return
@@ -110,9 +110,8 @@ func (h *OAuthHandler) Callback(c *gin.Context) {
 		return
 	}
 	h.renderResult(c, http.StatusOK, "千川授权完成", fmt.Sprintf(
-		"租户 %s 的广告主 %d 已写入独立加密凭证库",
+		"租户 %s 已写入本次授权中属于该租户的广告账户凭证",
 		tenant.Name,
-		tenant.AdvertiserID,
 	))
 }
 

@@ -21,19 +21,29 @@ import (
 )
 
 var (
-	ErrBindingInUse = errors.New("advertiser is already bound to another tenant")
-	ErrTenantExists = errors.New("tenant already exists")
+	ErrBindingInUse    = errors.New("advertiser is already bound to another tenant")
+	ErrTenantExists    = errors.New("tenant already exists")
+	ErrAccountRequired = errors.New("account_id is required when the tenant has multiple accounts")
+	ErrAccountNotFound = errors.New("account_id is not bound to this tenant")
+	ErrLastAccount     = errors.New("tenant must keep at least one account")
 )
 
+type AccountBinding struct {
+	AdvertiserID int64 `json:"advertiser_id"`
+	AwemeID      int64 `json:"aweme_id"`
+	LiveRoomID   int64 `json:"live_room_id"`
+}
+
 type Tenant struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	KeyHash      string    `json:"key_hash"`
-	AdvertiserID int64     `json:"advertiser_id"`
-	AwemeID      int64     `json:"aweme_id"`
-	LiveRoomID   int64     `json:"live_room_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	KeyHash      string           `json:"key_hash"`
+	AdvertiserID int64            `json:"advertiser_id"`
+	AwemeID      int64            `json:"aweme_id"`
+	LiveRoomID   int64            `json:"live_room_id"`
+	Accounts     []AccountBinding `json:"accounts,omitempty"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
 }
 
 func (t Tenant) Validate() error {
@@ -43,10 +53,62 @@ func (t Tenant) Validate() error {
 	if strings.TrimSpace(t.Name) == "" {
 		return errors.New("tenant name is required")
 	}
-	if t.AdvertiserID <= 0 {
-		return errors.New("advertiser id is required")
+	if len(t.AccountList()) == 0 {
+		return errors.New("at least one advertiser account is required")
+	}
+	seen := make(map[int64]bool)
+	for _, account := range t.Accounts {
+		if account.AdvertiserID <= 0 {
+			return errors.New("advertiser id must be positive")
+		}
+		if seen[account.AdvertiserID] {
+			return fmt.Errorf("duplicate advertiser id %d", account.AdvertiserID)
+		}
+		seen[account.AdvertiserID] = true
 	}
 	return nil
+}
+
+// AccountList returns the normalized account bindings while accepting the
+// legacy single-account fields stored by version 2 tenants.
+func (t Tenant) AccountList() []AccountBinding {
+	result := make([]AccountBinding, 0, len(t.Accounts)+1)
+	seen := make(map[int64]bool)
+	appendAccount := func(account AccountBinding) {
+		if account.AdvertiserID <= 0 || seen[account.AdvertiserID] {
+			return
+		}
+		seen[account.AdvertiserID] = true
+		result = append(result, account)
+	}
+	for _, account := range t.Accounts {
+		appendAccount(account)
+	}
+	appendAccount(AccountBinding{
+		AdvertiserID: t.AdvertiserID,
+		AwemeID:      t.AwemeID,
+		LiveRoomID:   t.LiveRoomID,
+	})
+	return result
+}
+
+func (t Tenant) ResolveAccount(accountID string) (AccountBinding, error) {
+	accounts := t.AccountList()
+	if strings.TrimSpace(accountID) == "" {
+		if len(accounts) == 1 {
+			return accounts[0], nil
+		}
+		if len(accounts) == 0 {
+			return AccountBinding{}, ErrAccountNotFound
+		}
+		return AccountBinding{}, ErrAccountRequired
+	}
+	for _, account := range accounts {
+		if fmt.Sprintf("%d", account.AdvertiserID) == strings.TrimSpace(accountID) {
+			return account, nil
+		}
+	}
+	return AccountBinding{}, ErrAccountNotFound
 }
 
 type fileData struct {
@@ -123,8 +185,12 @@ func (s *Store) Register(tenant Tenant, rawKey string) error {
 		if openErr != nil {
 			return openErr
 		}
-		if current.AdvertiserID == tenant.AdvertiserID {
-			return ErrBindingInUse
+		for _, account := range tenant.AccountList() {
+			for _, existing := range current.AccountList() {
+				if current.ID != tenant.ID && existing.AdvertiserID == account.AdvertiserID {
+					return ErrBindingInUse
+				}
+			}
 		}
 	}
 	encoded, err := s.sealTenant(tenant)
@@ -136,7 +202,9 @@ func (s *Store) Register(tenant Tenant, rawKey string) error {
 	}
 	data.Tenants[tenant.ID] = encoded
 	data.Index[tenant.KeyHash] = tenant.ID
-	data.Bindings[bindingKey(tenant.AdvertiserID)] = tenant.ID
+	for _, account := range tenant.AccountList() {
+		data.Bindings[bindingKey(account.AdvertiserID)] = tenant.ID
+	}
 	return s.write(data)
 }
 
@@ -191,8 +259,10 @@ func (s *Store) Delete(tenantID string) error {
 	}
 	delete(data.Tenants, tenantID)
 	delete(data.Index, tenant.KeyHash)
-	if data.Bindings[bindingKey(tenant.AdvertiserID)] == tenantID {
-		delete(data.Bindings, bindingKey(tenant.AdvertiserID))
+	for _, account := range tenant.AccountList() {
+		if data.Bindings[bindingKey(account.AdvertiserID)] == tenantID {
+			delete(data.Bindings, bindingKey(account.AdvertiserID))
+		}
 	}
 	return s.write(data)
 }
@@ -208,24 +278,82 @@ func (s *Store) UpdateBinding(tenantID string, advertiserID, awemeID, liveRoomID
 	if err != nil {
 		return err
 	}
-	previousAdvertiserID := tenant.AdvertiserID
 	if advertiserID <= 0 {
 		return errors.New("advertiser id is required")
 	}
 	if owner, exists := data.Bindings[bindingKey(advertiserID)]; exists && owner != tenantID {
 		return ErrBindingInUse
 	}
-	tenant.AdvertiserID = advertiserID
-	tenant.AwemeID = awemeID
-	tenant.LiveRoomID = liveRoomID
+	tenant.Accounts = tenant.AccountList()
+	found := false
+	for index := range tenant.Accounts {
+		if tenant.Accounts[index].AdvertiserID == advertiserID {
+			tenant.Accounts[index].AwemeID = awemeID
+			tenant.Accounts[index].LiveRoomID = liveRoomID
+			found = true
+			break
+		}
+	}
+	if !found {
+		tenant.Accounts = append(tenant.Accounts, AccountBinding{
+			AdvertiserID: advertiserID,
+			AwemeID:      awemeID,
+			LiveRoomID:   liveRoomID,
+		})
+	}
+	tenant.AdvertiserID = tenant.Accounts[0].AdvertiserID
+	tenant.AwemeID = tenant.Accounts[0].AwemeID
+	tenant.LiveRoomID = tenant.Accounts[0].LiveRoomID
 	tenant.UpdatedAt = time.Now().UTC()
-	delete(data.Bindings, bindingKey(previousAdvertiserID))
+	for _, account := range tenant.Accounts {
+		data.Bindings[bindingKey(account.AdvertiserID)] = tenantID
+	}
 	encoded, err := s.sealTenant(*tenant)
 	if err != nil {
 		return err
 	}
 	data.Tenants[tenantID] = encoded
-	data.Bindings[bindingKey(advertiserID)] = tenantID
+	return s.write(data)
+}
+
+func (s *Store) RemoveAccount(tenantID string, advertiserID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.read()
+	if err != nil {
+		return err
+	}
+	tenant, err := s.openTenant(tenantID, data)
+	if err != nil {
+		return err
+	}
+	accounts := tenant.AccountList()
+	if len(accounts) <= 1 {
+		return ErrLastAccount
+	}
+	filtered := make([]AccountBinding, 0, len(accounts)-1)
+	found := false
+	for _, account := range accounts {
+		if account.AdvertiserID == advertiserID {
+			found = true
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	if !found {
+		return ErrAccountNotFound
+	}
+	tenant.Accounts = filtered
+	tenant.AdvertiserID = filtered[0].AdvertiserID
+	tenant.AwemeID = filtered[0].AwemeID
+	tenant.LiveRoomID = filtered[0].LiveRoomID
+	tenant.UpdatedAt = time.Now().UTC()
+	delete(data.Bindings, bindingKey(advertiserID))
+	encoded, err := s.sealTenant(*tenant)
+	if err != nil {
+		return err
+	}
+	data.Tenants[tenantID] = encoded
 	return s.write(data)
 }
 
@@ -257,7 +385,7 @@ func (s *Store) ensureFile() error {
 		return nil
 	}
 	return s.write(fileData{
-		Version:  2,
+		Version:  3,
 		Tenants:  map[string]encryptedTenant{},
 		Index:    map[string]string{},
 		Bindings: map[string]string{},
@@ -277,7 +405,7 @@ func (s *Store) read() (fileData, error) {
 		if data.Tenants == nil || data.Index == nil {
 			return fileData{}, errors.New("unsupported tenant store format")
 		}
-		data.Version = 2
+		data.Version = 3
 		data.Bindings = map[string]string{}
 		for id := range data.Tenants {
 			tenant, openErr := s.openTenant(id, data)
@@ -286,8 +414,23 @@ func (s *Store) read() (fileData, error) {
 			}
 			data.Bindings[bindingKey(tenant.AdvertiserID)] = id
 		}
-	} else if data.Version != 2 || data.Tenants == nil || data.Index == nil || data.Bindings == nil {
+	} else if (data.Version != 2 && data.Version != 3) || data.Tenants == nil || data.Index == nil || data.Bindings == nil {
 		return fileData{}, errors.New("unsupported tenant store format")
+	}
+	data.Version = 3
+	data.Bindings = map[string]string{}
+	for id := range data.Tenants {
+		tenant, openErr := s.openTenant(id, data)
+		if openErr != nil {
+			return fileData{}, openErr
+		}
+		for _, account := range tenant.AccountList() {
+			key := bindingKey(account.AdvertiserID)
+			if owner, exists := data.Bindings[key]; exists && owner != id {
+				return fileData{}, ErrBindingInUse
+			}
+			data.Bindings[key] = id
+		}
 	}
 	return data, nil
 }

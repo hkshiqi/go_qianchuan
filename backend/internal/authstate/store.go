@@ -16,6 +16,7 @@ var (
 
 type entry struct {
 	tenantID  string
+	accountID int64
 	expiresAt time.Time
 }
 
@@ -42,8 +43,15 @@ func newStoreWithClock(ttl time.Duration, now func() time.Time) *Store {
 }
 
 func (s *Store) Issue(tenantID string) (string, error) {
+	return s.IssueForAccount(tenantID, 0)
+}
+
+func (s *Store) IssueForAccount(tenantID string, accountID int64) (string, error) {
 	if err := (tenantstore.Tenant{ID: tenantID, Name: tenantID, AdvertiserID: 1}).Validate(); err != nil {
 		return "", err
+	}
+	if accountID < 0 {
+		return "", errors.New("account id must be positive")
 	}
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
@@ -58,7 +66,7 @@ func (s *Store) Issue(tenantID string) (string, error) {
 			delete(s.entries, key)
 		}
 	}
-	s.entries[state] = entry{tenantID: tenantID, expiresAt: now.Add(s.ttl)}
+	s.entries[state] = entry{tenantID: tenantID, accountID: accountID, expiresAt: now.Add(s.ttl)}
 	return state, nil
 }
 
@@ -77,6 +85,11 @@ func (s *Store) Consume(state string) (string, error) {
 }
 
 func (s *Store) Peek(state string) (string, error) {
+	tenantID, _, err := s.PeekAccount(state)
+	return tenantID, err
+}
+
+func (s *Store) PeekAccount(state string) (string, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, exists := s.entries[state]
@@ -84,9 +97,9 @@ func (s *Store) Peek(state string) (string, error) {
 		if exists {
 			delete(s.entries, state)
 		}
-		return "", ErrInvalidState
+		return "", 0, ErrInvalidState
 	}
-	return value.tenantID, nil
+	return value.tenantID, value.accountID, nil
 }
 
 // Discard invalidates a state even when the OAuth callback failed.

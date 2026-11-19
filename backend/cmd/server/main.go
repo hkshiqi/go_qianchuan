@@ -114,6 +114,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 		WriteEnabled:          operationsWriteEnabled,
 		OAuthAuthorizationURL: oauthAuthorizationURL,
 		IssueAuthState:        authStates.Issue,
+		IssueAccountAuthState: authStates.IssueForAccount,
 	})
 	if err != nil {
 		log.Fatalf("initialize tenant runtime factory: %v", err)

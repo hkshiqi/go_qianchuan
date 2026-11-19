@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,6 +33,14 @@ func main() {
 	switch os.Args[1] {
 	case "create":
 		if err := createTenant(store, os.Args[2:]); err != nil {
+			fatal(err)
+		}
+	case "add-account":
+		if err := addAccount(store, os.Args[2:]); err != nil {
+			fatal(err)
+		}
+	case "remove-account":
+		if err := removeAccount(store, os.Args[2:]); err != nil {
 			fatal(err)
 		}
 	case "delete":
@@ -64,6 +73,7 @@ func createTenant(store *tenantstore.Store, args []string) error {
 	advertiserID := flags.String("advertiser-id", "", "Qianchuan advertiser id")
 	awemeID := flags.String("aweme-id", "0", "Douyin aweme id")
 	liveRoomID := flags.String("live-room-id", "0", "live room id")
+	accountsFile := flags.String("accounts-file", "", "JSON array of additional account bindings")
 	keyFile := flags.String("key-file", "", "write API key to this 0600 file")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -83,6 +93,23 @@ func createTenant(store *tenantstore.Store, args []string) error {
 	if err != nil {
 		return err
 	}
+	accounts, err := parseAccountsFile(*accountsFile)
+	if err != nil {
+		return err
+	}
+	accountSet := append([]tenantstore.AccountBinding{{
+		AdvertiserID: advertiser,
+		AwemeID:      aweme,
+		LiveRoomID:   room,
+	}}, accounts...)
+	seenAccounts := make(map[int64]bool)
+	for _, account := range accountSet {
+		if seenAccounts[account.AdvertiserID] {
+			return fmt.Errorf("duplicate advertiser id %d", account.AdvertiserID)
+		}
+		seenAccounts[account.AdvertiserID] = true
+	}
+	accounts = accountSet
 
 	rawKey, err := generateAPIKey()
 	if err != nil {
@@ -94,6 +121,7 @@ func createTenant(store *tenantstore.Store, args []string) error {
 		AdvertiserID: advertiser,
 		AwemeID:      aweme,
 		LiveRoomID:   room,
+		Accounts:     accounts,
 	}
 	if err := store.Register(tenant, rawKey); err != nil {
 		return err
@@ -114,6 +142,87 @@ func createTenant(store *tenantstore.Store, args []string) error {
 	return nil
 }
 
+func addAccount(store *tenantstore.Store, args []string) error {
+	flags := flag.NewFlagSet("add-account", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	id := flags.String("id", "", "tenant id")
+	advertiserID := flags.String("advertiser-id", "", "Qianchuan advertiser id")
+	awemeID := flags.String("aweme-id", "0", "Douyin aweme id")
+	liveRoomID := flags.String("live-room-id", "0", "live room id")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	tenantID := strings.TrimSpace(*id)
+	if tenantID == "" {
+		return errors.New("--id is required")
+	}
+	advertiser, err := parseID(*advertiserID, "--advertiser-id")
+	if err != nil {
+		return err
+	}
+	aweme, err := parseOptionalID(*awemeID, "--aweme-id")
+	if err != nil {
+		return err
+	}
+	room, err := parseOptionalID(*liveRoomID, "--live-room-id")
+	if err != nil {
+		return err
+	}
+	if err := store.UpdateBinding(tenantID, advertiser, aweme, room); err != nil {
+		return err
+	}
+	fmt.Printf("tenant %s now includes advertiser %d\n", tenantID, advertiser)
+	return nil
+}
+
+func removeAccount(store *tenantstore.Store, args []string) error {
+	flags := flag.NewFlagSet("remove-account", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	id := flags.String("id", "", "tenant id")
+	advertiserID := flags.String("advertiser-id", "", "Qianchuan advertiser id")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	tenantID := strings.TrimSpace(*id)
+	if tenantID == "" {
+		return errors.New("--id is required")
+	}
+	advertiser, err := parseID(*advertiserID, "--advertiser-id")
+	if err != nil {
+		return err
+	}
+	if err := store.RemoveAccount(tenantID, advertiser); err != nil {
+		return err
+	}
+	fmt.Printf("tenant %s no longer includes advertiser %d\n", tenantID, advertiser)
+	return nil
+}
+
+func parseAccountsFile(path string) ([]tenantstore.AccountBinding, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read accounts file: %w", err)
+	}
+	var accounts []tenantstore.AccountBinding
+	if err := json.Unmarshal(raw, &accounts); err != nil {
+		return nil, fmt.Errorf("parse accounts file: %w", err)
+	}
+	seen := make(map[int64]bool)
+	for _, account := range accounts {
+		if account.AdvertiserID <= 0 {
+			return nil, errors.New("accounts file contains an invalid advertiser_id")
+		}
+		if seen[account.AdvertiserID] {
+			return nil, fmt.Errorf("accounts file contains duplicate advertiser_id %d", account.AdvertiserID)
+		}
+		seen[account.AdvertiserID] = true
+	}
+	return accounts, nil
+}
+
 func listTenants(store *tenantstore.Store) error {
 	tenants, err := store.List()
 	if err != nil {
@@ -122,16 +231,22 @@ func listTenants(store *tenantstore.Store) error {
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "TENANT\tNAME\tADVERTISER\tAWEME\tLIVE_ROOM\tUPDATED")
 	for _, tenant := range tenants {
-		fmt.Fprintf(
-			writer,
-			"%s\t%s\t%d\t%d\t%d\t%s\n",
-			tenant.ID,
-			tenant.Name,
-			tenant.AdvertiserID,
-			tenant.AwemeID,
-			tenant.LiveRoomID,
-			tenant.UpdatedAt.Format(time.RFC3339),
-		)
+		for index, account := range tenant.AccountList() {
+			tenantID, name := "", ""
+			if index == 0 {
+				tenantID, name = tenant.ID, tenant.Name
+			}
+			fmt.Fprintf(
+				writer,
+				"%s\t%s\t%d\t%d\t%d\t%s\n",
+				tenantID,
+				name,
+				account.AdvertiserID,
+				account.AwemeID,
+				account.LiveRoomID,
+				tenant.UpdatedAt.Format(time.RFC3339),
+			)
+		}
 	}
 	return writer.Flush()
 }
@@ -231,7 +346,9 @@ func parseOptionalID(value, name string) (int64, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `qianchuan-tenant create --id TENANT --name NAME --advertiser-id ID [--aweme-id ID] [--live-room-id ID] [--key-file PATH]
+	fmt.Fprintln(os.Stderr, `qianchuan-tenant create --id TENANT --name NAME --advertiser-id ID [--aweme-id ID] [--live-room-id ID] [--accounts-file PATH] [--key-file PATH]
+qianchuan-tenant add-account --id TENANT --advertiser-id ID [--aweme-id ID] [--live-room-id ID]
+qianchuan-tenant remove-account --id TENANT --advertiser-id ID
 qianchuan-tenant delete --id TENANT
 qianchuan-tenant list`)
 }

@@ -111,7 +111,7 @@ func (s *Server) dispatch(ctx context.Context, tenant *tenantstore.Tenant, req *
 				"version": "1.0.0",
 				"title":   "千川直播投放控制 MCP",
 			},
-			"instructions": "先调用 qianchuan_get_status 核对账户。所有指标读取后再执行策略评估；计划写操作受服务端开关限制。",
+			"instructions": "先调用 qianchuan_list_accounts 查询本 Key 可操作的账户。多账户时必须给账户类工具传 account_id；单账户可省略。所有指标读取后再执行策略评估；计划写操作受服务端开关限制。",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -122,8 +122,8 @@ func (s *Server) dispatch(ctx context.Context, tenant *tenantstore.Tenant, req *
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return nil, &rpcError{Code: -32602, Message: "Invalid tools/call params"}
 		}
-		if tenantFieldRequested(params.Arguments) {
-			return toolFailure("账户上下文由 Bearer Key 决定，请求参数不能指定 advertiser_id、tenant_id 或密钥"), nil
+		if forbiddenTenantFieldRequested(params.Arguments) {
+			return toolFailure("租户上下文由 Bearer Key 决定；使用 account_id 在本租户账户中选择，不能传 advertiser_id、tenant_id 或密钥"), nil
 		}
 		tools, err := s.resolver.ToolsFor(ctx, tenant)
 		if err != nil {
@@ -139,11 +139,11 @@ func (s *Server) dispatch(ctx context.Context, tenant *tenantstore.Tenant, req *
 	}
 }
 
-func tenantFieldRequested(args map[string]any) bool {
-	return containsIdentifierField(args)
+func forbiddenTenantFieldRequested(args map[string]any) bool {
+	return containsForbiddenTenantField(args)
 }
 
-func containsIdentifierField(value any) bool {
+func containsForbiddenTenantField(value any) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, nested := range typed {
@@ -151,13 +151,13 @@ func containsIdentifierField(value any) bool {
 			case "advertiser_id", "advertiserId", "tenant_id", "tenantId", "api_key", "apiKey":
 				return true
 			}
-			if containsIdentifierField(nested) {
+			if containsForbiddenTenantField(nested) {
 				return true
 			}
 		}
 	case []any:
 		for _, nested := range typed {
-			if containsIdentifierField(nested) {
+			if containsForbiddenTenantField(nested) {
 				return true
 			}
 		}
@@ -180,7 +180,16 @@ func availableTools() []tool {
 		{
 			Name:        "qianchuan_get_status",
 			Title:       "账户与 MCP 状态",
-			Description: "核对 MCP 协议、千川授权状态、当前账户与直播间上下文、读写开关。",
+			Description: "核对 MCP 协议、可操作账户、千川授权状态、当前账户与直播间上下文、读写开关。",
+			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("可选；多账户时传入本租户内的广告账户 ID 查看该账户状态"),
+			}),
+			Annotations: readOnlyAnnotations(),
+		},
+		{
+			Name:        "qianchuan_list_accounts",
+			Title:       "查询可切换投放账户",
+			Description: "列出当前个人 Key 可操作的广告账户、抖音号、直播间和授权状态；不会返回其他租户账户。",
 			InputSchema: objectSchema(nil),
 			Annotations: readOnlyAnnotations(),
 		},
@@ -189,6 +198,7 @@ func availableTools() []tool {
 			Title:       "查询投放计划",
 			Description: "查询全域直播推广计划，按消耗排序；默认最近24小时。大整数 ID 以字符串返回。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"start_time": stringSchema("开始时间 YYYY-MM-DD HH:mm:ss；默认24小时前"),
 				"end_time":   stringSchema("结束时间 YYYY-MM-DD HH:mm:ss；默认现在"),
 				"page":       integerSchema("页码", 1),
@@ -201,6 +211,7 @@ func availableTools() []tool {
 			Title:       "查询计划详情",
 			Description: "读取单个计划详情、预算、ROI 目标和关联素材。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id": stringSchema("计划 ID"),
 			}, "ad_id"),
 			Annotations: readOnlyAnnotations(),
@@ -210,6 +221,7 @@ func availableTools() []tool {
 			Title:       "查询计划素材",
 			Description: "读取计划素材及全部指标，服务端按消耗排名并锁定前3名。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":      stringSchema("计划 ID"),
 				"start_date": stringSchema("开始日期 YYYY-MM-DD；默认今天"),
 				"end_date":   stringSchema("结束日期 YYYY-MM-DD；默认今天"),
@@ -221,6 +233,7 @@ func availableTools() []tool {
 			Title:       "素材库效果报表",
 			Description: "读取账户素材库效果数据，返回消耗、点击率、转化率、GPM、ROI，并标记消耗前3素材。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"start_date": stringSchema("开始日期 YYYY-MM-DD；默认今天"),
 				"end_date":   stringSchema("结束日期 YYYY-MM-DD；默认今天"),
 				"page":       integerSchema("页码", 1),
@@ -232,7 +245,9 @@ func availableTools() []tool {
 			Name:        "qianchuan_live_overview",
 			Title:       "直播间投放概览",
 			Description: "读取当前直播间当日投放数据，包含消耗、点击率、转化率、GPM、成交与分钟消耗。",
-			InputSchema: objectSchema(nil),
+			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
+			}),
 			Annotations: readOnlyAnnotations(),
 		},
 		{
@@ -240,6 +255,7 @@ func availableTools() []tool {
 			Title:       "评估投放规则",
 			Description: "按点击率>=7%、点击转化率>=8%、分钟消耗>=20元评估计划，返回可替换素材；前3消耗素材不可候选。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id":     stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":          stringSchema("计划 ID"),
 				"window_minutes": integerSchema("消耗统计窗口分钟数，默认5", 1),
 			}, "ad_id"),
@@ -250,6 +266,7 @@ func availableTools() []tool {
 			Title:       "查询可复用素材库",
 			Description: "读取账户现有素材库；替换素材只能从返回结果中选择，不创建或上传新素材。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"start_date": stringSchema("开始日期 YYYY-MM-DD；默认今天"),
 				"end_date":   stringSchema("结束日期 YYYY-MM-DD；默认今天"),
 				"page":       integerSchema("页码", 1),
@@ -262,6 +279,7 @@ func availableTools() []tool {
 			Title:       "替换非保护素材",
 			Description: "从现有素材库选择素材替换计划中的非前3素材。服务端再次校验保护名单并只允许加入素材库现有素材。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id": stringSchema("计划 ID"),
 				"material_ids": map[string]any{
 					"type":        "array",
@@ -282,6 +300,7 @@ func availableTools() []tool {
 			Title:       "调整计划预算",
 			Description: "调整单个计划日预算；写操作开关关闭时拒绝执行。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":   stringSchema("计划 ID"),
 				"budget":  numberSchema("新日预算，人民币元", 0.01),
 				"confirm": booleanSchema("必须为 true 才执行写操作"),
@@ -293,6 +312,7 @@ func availableTools() []tool {
 			Title:       "暂停计划",
 			Description: "暂停指定计划；写操作开关关闭时拒绝执行。",
 			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":   stringSchema("计划 ID"),
 				"confirm": booleanSchema("必须为 true 才执行写操作"),
 			}, "ad_id", "confirm"),

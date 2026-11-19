@@ -98,6 +98,11 @@ create_tenant() {
 
 create_tenant isolation-a 900000001
 create_tenant isolation-b 900000002
+TENANT_STORE_PATH="$work/tenants.json" \
+TENANT_ENCRYPTION_KEY="$encryption_key" \
+  "$BACKEND_ROOT/bin/qianchuan-tenant" add-account \
+    --id isolation-a \
+    --advertiser-id 900000003
 
 (
   cd "$BACKEND_ROOT"
@@ -122,16 +127,33 @@ curl -fsS "http://127.0.0.1:$test_port/healthz" >/dev/null ||
   fail "temporary isolation server failed to start; see $work/server.log"
 
 call_status() {
+  local key_file="$1"
+  local arguments="${2:-{}}"
   local key
-  key="$(tr -d '\r\n' < "$1")"
+  key="$(tr -d '\r\n' < "$key_file")"
   curl -sS -X POST "http://127.0.0.1:$test_port/mcp" \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $key" \
-    --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"qianchuan_get_status","arguments":{}}}'
+    --data "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"qianchuan_get_status\",\"arguments\":$arguments}}"
+}
+
+call_tool() {
+  local key
+  key="$(tr -d '\r\n' < "$1")"
+  local tool="$2"
+  local arguments="$3"
+  curl -sS -X POST "http://127.0.0.1:$test_port/mcp" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $key" \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"$tool\",\"arguments\":$arguments}}"
 }
 
 status_a="$(call_status "$work/isolation-a.key")"
 status_b="$(call_status "$work/isolation-b.key")"
+accounts_a="$(call_tool "$work/isolation-a.key" qianchuan_list_accounts '{}')"
+foreign_status="$(call_status "$work/isolation-a.key" '{"account_id":"900000002"}')"
+missing_selection="$(call_tool "$work/isolation-a.key" qianchuan_list_plans '{}')"
+selected_status="$(call_status "$work/isolation-a.key" '{"account_id":"900000003"}')"
 python3 - "$status_a" "$status_b" <<'PY'
 import json
 import sys
@@ -144,9 +166,45 @@ def parse(payload):
 
 a = parse(sys.argv[1])
 b = parse(sys.argv[2])
-if a.get("advertiser_id") != "900000001" or b.get("advertiser_id") != "900000002":
-    raise SystemExit(f"tenant accounts crossed: A={a}, B={b}")
-print("OK two isolated tenant keys resolve to different accounts")
+if a.get("advertiser_id") != "" or a.get("account_selection_required") is not True:
+    raise SystemExit(f"multi-account key did not require an explicit selection: {a}")
+if b.get("advertiser_id") != "900000002" or b.get("account_selection_required"):
+    raise SystemExit(f"single-account key context failed: {b}")
+print("OK multi-account key requires selection; single-account key resolves directly")
+PY
+
+python3 - "$accounts_a" "$foreign_status" "$missing_selection" "$selected_status" <<'PY'
+import json
+import sys
+
+def parse(payload):
+    envelope = json.loads(payload)
+    if envelope.get("error"):
+        raise SystemExit(f"RPC failed: {envelope['error']}")
+    result = envelope["result"]
+    text = result["content"][0]["text"]
+    return result.get("isError", False), text
+
+is_error, text = parse(sys.argv[1])
+accounts = json.loads(text)
+if is_error or sorted(item["account_id"] for item in accounts["accounts"]) != ["900000001", "900000003"]:
+    raise SystemExit(f"account listing failed: {accounts}")
+if not accounts["account_selection_required"]:
+    raise SystemExit("multi-account listing did not require explicit selection")
+
+is_error, text = parse(sys.argv[2])
+if not is_error or "not bound to this tenant" not in text:
+    raise SystemExit(f"foreign account was not rejected: {text}")
+
+is_error, text = parse(sys.argv[3])
+if not is_error or "account_id is required" not in text:
+    raise SystemExit(f"missing selection was not rejected: {text}")
+
+is_error, text = parse(sys.argv[4])
+status = json.loads(text)
+if is_error or status.get("advertiser_id") != "900000003" or status.get("account_selection_required"):
+    raise SystemExit(f"selected account context failed: {status}")
+print("OK one key selects two accounts; missing and foreign account_id are rejected")
 PY
 
 printf 'PASS: MCP tenant isolation verification\n'

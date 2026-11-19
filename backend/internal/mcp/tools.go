@@ -26,6 +26,7 @@ type Tools struct {
 	writeEnabled   bool
 	authURL        string
 	tenant         TenantIdentity
+	accounts       []tenantstore.AccountBinding
 	authURLBuilder func(tenantID string) (string, error)
 	tokenStorePath string
 }
@@ -53,6 +54,7 @@ func NewTenantTools(
 	qianchuanService.DefaultLiveRoomID = tenant.LiveRoomID
 	tools := NewTools(qianchuanService, writeEnabled, authURL)
 	tools.tenant = TenantIdentity{ID: tenant.ID, Name: tenant.Name}
+	tools.accounts = tenant.AccountList()
 	return tools
 }
 
@@ -62,7 +64,9 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 	}
 	switch name {
 	case "qianchuan_get_status":
-		return t.status(ctx), nil
+		return t.status(ctx, args)
+	case "qianchuan_list_accounts":
+		return t.listAccounts(ctx), nil
 	case "qianchuan_list_plans":
 		return t.listPlans(ctx, args)
 	case "qianchuan_get_plan":
@@ -74,7 +78,7 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 	case "qianchuan_list_material_library":
 		return t.materialReport(ctx, args)
 	case "qianchuan_live_overview":
-		return t.liveOverview(ctx)
+		return t.liveOverview(ctx, args)
 	case "qianchuan_evaluate_rules":
 		return t.evaluateRules(ctx, args)
 	case "qianchuan_rotate_materials":
@@ -88,11 +92,22 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 	}
 }
 
-func (t *Tools) status(ctx context.Context) Status {
-	advertiserID := t.service.DefaultAdvertiserID
+func (t *Tools) status(ctx context.Context, args map[string]any) (Status, error) {
+	accounts := t.accountList()
+	account, accountErr := t.resolveAccount(args)
+	advertiserID := int64(0)
+	awemeID := int64(0)
+	liveRoomID := int64(0)
+	if accountErr == nil {
+		advertiserID = account.AdvertiserID
+		awemeID = account.AwemeID
+		liveRoomID = account.LiveRoomID
+	} else if len(accounts) == 1 || stringArg(args, "account_id", "") != "" {
+		return Status{}, accountErr
+	}
 	authorized := false
 	if advertiserID > 0 {
-		if _, tokenErr := t.service.TokenManager.AccessToken(ctx, advertiserID); tokenErr == nil {
+		if _, tokenErr := t.service.TokenManager.AccessToken(ctx, account.AdvertiserID); tokenErr == nil {
 			authorized = true
 		}
 	}
@@ -102,30 +117,115 @@ func (t *Tools) status(ctx context.Context) Status {
 	}
 	authorizationURL := t.authURL
 	if t.authURLBuilder != nil {
-		if generated, err := t.authURLBuilder(t.tenant.ID); err == nil {
+		selector := t.tenant.ID
+		if advertiserID > 0 {
+			selector = t.tenant.ID + "|" + formatID(advertiserID)
+		}
+		if generated, err := t.authURLBuilder(selector); err == nil {
 			authorizationURL = generated
 		}
 	}
 	return Status{
-		TenantID:            t.tenant.ID,
-		TenantName:          t.tenant.Name,
-		Service:            "qianchuan-live-operations-mcp",
-		ProtocolVersion:    protocolVersion,
-		Authenticated:      authorized,
-		AdvertiserID:       formatID(advertiserID),
-		AwemeID:            formatID(t.service.DefaultAwemeID),
-		LiveRoomID:         formatID(t.service.DefaultLiveRoomID),
-		ReadEnabled:        true,
-		WriteEnabled:       t.writeEnabled,
-		AuthorizationURL:   authorizationURL,
-		Capabilities:       []string{"account", "plans", "materials", "live", "rules"},
-		WriteCapabilities:  []string{"budget", "pause", "material_rotation"},
-		OperationMode:      "server-side MCP; no browser cookies",
-		RestartRequired:    false,
-		TokenEncrypted:      true,
-		TokenStorePresent:  t.tokenStoreExists(),
-		WriteEnabledReason: reason,
+		TenantID:                 t.tenant.ID,
+		TenantName:               t.tenant.Name,
+		Service:                  "qianchuan-live-operations-mcp",
+		ProtocolVersion:          protocolVersion,
+		Authenticated:            authorized,
+		AdvertiserID:             formatID(advertiserID),
+		AwemeID:                  formatID(awemeID),
+		LiveRoomID:               formatID(liveRoomID),
+		Accounts:                 publicAccounts(accounts),
+		AccountSelectionRequired: len(accounts) > 1 && advertiserID == 0,
+		ReadEnabled:              true,
+		WriteEnabled:             t.writeEnabled,
+		AuthorizationURL:         authorizationURL,
+		Capabilities:             []string{"account", "plans", "materials", "live", "rules"},
+		WriteCapabilities:        []string{"budget", "pause", "material_rotation"},
+		OperationMode:            "server-side MCP; no browser cookies",
+		RestartRequired:          false,
+		TokenEncrypted:           true,
+		TokenStorePresent:        t.tokenStoreExists(),
+		WriteEnabledReason:       reason,
+	}, nil
+}
+
+func (t *Tools) listAccounts(ctx context.Context) map[string]any {
+	accounts := make([]map[string]any, 0, len(t.accountList()))
+	for _, account := range t.accountList() {
+		authorized := false
+		if _, err := t.service.TokenManager.AccessToken(ctx, account.AdvertiserID); err == nil {
+			authorized = true
+		}
+		authorizationURL := ""
+		if t.authURLBuilder != nil {
+			if generated, err := t.authURLBuilder(t.tenant.ID + "|" + formatID(account.AdvertiserID)); err == nil {
+				authorizationURL = generated
+			}
+		}
+		accounts = append(accounts, map[string]any{
+			"account_id":        formatID(account.AdvertiserID),
+			"advertiser_id":     formatID(account.AdvertiserID),
+			"aweme_id":          formatID(account.AwemeID),
+			"live_room_id":      formatID(account.LiveRoomID),
+			"authenticated":     authorized,
+			"default_eligible":  len(t.accountList()) == 1,
+			"authorization_url": authorizationURL,
+		})
 	}
+	return map[string]any{
+		"tenant_id":                  t.tenant.ID,
+		"tenant_name":                t.tenant.Name,
+		"accounts":                   accounts,
+		"account_selection_required": len(accounts) > 1,
+		"selection_rule":             "多个账户时必须向账户类工具传 account_id；可以跨本租户账户选择，不能选择其他租户账户。",
+	}
+}
+
+func (t *Tools) accountList() []tenantstore.AccountBinding {
+	if len(t.accounts) > 0 {
+		return append([]tenantstore.AccountBinding{}, t.accounts...)
+	}
+	if t.service.DefaultAdvertiserID > 0 {
+		return []tenantstore.AccountBinding{{
+			AdvertiserID: t.service.DefaultAdvertiserID,
+			AwemeID:      t.service.DefaultAwemeID,
+			LiveRoomID:   t.service.DefaultLiveRoomID,
+		}}
+	}
+	return nil
+}
+
+func (t *Tools) resolveAccount(args map[string]any) (tenantstore.AccountBinding, error) {
+	accountID := stringArg(args, "account_id", "")
+	accounts := t.accountList()
+	if accountID == "" {
+		if len(accounts) == 1 {
+			return accounts[0], nil
+		}
+		if len(accounts) == 0 {
+			return tenantstore.AccountBinding{}, tenantstore.ErrAccountNotFound
+		}
+		return tenantstore.AccountBinding{}, tenantstore.ErrAccountRequired
+	}
+	for _, account := range accounts {
+		if formatID(account.AdvertiserID) == accountID {
+			return account, nil
+		}
+	}
+	return tenantstore.AccountBinding{}, tenantstore.ErrAccountNotFound
+}
+
+func publicAccounts(accounts []tenantstore.AccountBinding) []map[string]string {
+	result := make([]map[string]string, 0, len(accounts))
+	for _, account := range accounts {
+		result = append(result, map[string]string{
+			"account_id":    formatID(account.AdvertiserID),
+			"advertiser_id": formatID(account.AdvertiserID),
+			"aweme_id":      formatID(account.AwemeID),
+			"live_room_id":  formatID(account.LiveRoomID),
+		})
+	}
+	return result
 }
 
 func (t *Tools) tokenStoreExists() bool {
@@ -137,7 +237,11 @@ func (t *Tools) tokenStoreExists() bool {
 }
 
 func (t *Tools) listPlans(ctx context.Context, args map[string]any) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +278,7 @@ func (t *Tools) listPlans(ctx context.Context, args map[string]any) (any, error)
 		list = append(list, planMap(plan))
 	}
 	return map[string]any{
-		"account":   t.account(advertiserID),
+		"account":   t.account(account),
 		"window":    map[string]string{"start_time": startTime, "end_time": endTime},
 		"page_info": response.Data.PageInfo,
 		"plans":     list,
@@ -182,7 +286,11 @@ func (t *Tools) listPlans(ctx context.Context, args map[string]any) (any, error)
 }
 
 func (t *Tools) getPlan(ctx context.Context, args map[string]any) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -202,13 +310,17 @@ func (t *Tools) getPlan(ctx context.Context, args map[string]any) (any, error) {
 		return nil, apiError("获取计划详情失败", response.Code, response.Message)
 	}
 	return map[string]any{
-		"account": t.account(advertiserID),
+		"account": t.account(account),
 		"plan":    response.Data,
 	}, nil
 }
 
 func (t *Tools) planMaterials(ctx context.Context, args map[string]any) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -223,18 +335,22 @@ func (t *Tools) planMaterials(ctx context.Context, args map[string]any) (any, er
 		return nil, err
 	}
 	return map[string]any{
-		"account":   t.account(advertiserID),
-		"ad_id":     formatUintID(adID),
-		"window":    map[string]string{"start_date": startDate, "end_date": endDate},
-		"materials": materials,
+		"account":        t.account(account),
+		"ad_id":          formatUintID(adID),
+		"window":         map[string]string{"start_date": startDate, "end_date": endDate},
+		"materials":      materials,
 		"protected_top3": protectedTop3(materials),
-		"rule":      "消耗最高的前3素材永久保留；替换仅允许非前3素材",
-		"warnings":  warnings,
+		"rule":           "消耗最高的前3素材永久保留；替换仅允许非前3素材",
+		"warnings":       warnings,
 	}, nil
 }
 
 func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -270,24 +386,28 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		return nil, apiError("获取素材报表失败", response.Code, response.Message)
 	}
 	return map[string]any{
-		"account":    t.account(advertiserID),
-		"window":     map[string]string{"start_date": startDate, "end_date": endDate},
-		"page_info":  response.Data.PageInfo,
-		"materials":  response.Data.List,
-		"source":     "qianchuan report material",
+		"account":     t.account(account),
+		"window":      map[string]string{"start_date": startDate, "end_date": endDate},
+		"page_info":   response.Data.PageInfo,
+		"materials":   response.Data.List,
+		"source":      "qianchuan report material",
 		"write_guard": "素材库只读；本工具不会上传或创建素材",
 	}, nil
 }
 
-func (t *Tools) liveOverview(ctx context.Context) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+func (t *Tools) liveOverview(ctx context.Context, args map[string]any) (any, error) {
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
 	response, err := t.service.Client.LiveGet(ctx, sdk.LiveGetReq{
 		AccessToken:  token,
 		AdvertiserId: advertiserID,
-		AwemeId:      t.service.DefaultAwemeID,
+		AwemeId:      account.AwemeID,
 		Fields: []string{
 			"stat_cost",
 			"click_cnt",
@@ -310,16 +430,20 @@ func (t *Tools) liveOverview(ctx context.Context) (any, error) {
 		return nil, apiError("获取直播数据失败", response.Code, response.Message)
 	}
 	return map[string]any{
-		"account":     t.account(advertiserID),
-		"aweme_id":    formatID(t.service.DefaultAwemeID),
-		"live_room_id": formatID(t.service.DefaultLiveRoomID),
-		"live":        response.Data,
+		"account":      t.account(account),
+		"aweme_id":     formatID(account.AwemeID),
+		"live_room_id": formatID(account.LiveRoomID),
+		"live":         response.Data,
 		"refreshed_at": time.Now().Format(time.RFC3339),
 	}, nil
 }
 
 func (t *Tools) evaluateRules(ctx context.Context, args map[string]any) (any, error) {
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -374,24 +498,24 @@ func (t *Tools) evaluateRules(ctx context.Context, args map[string]any) (any, er
 		status = "attention_required"
 	}
 	return Evaluation{
-		AdvertiserID:         formatID(advertiserID),
-		AdID:                 formatUintID(adID),
-		WindowMinutes:        window,
-		Cost:                 round(topCost, 2),
-		MinuteCost:           round(minuteCost, 2),
-		MinuteCostPassed:     minutePassed,
-		CTR:                  round(ctr, 6),
-		CTRPassed:            ctrPassed,
-		ConversionRate:       round(conversion, 6),
-		ConversionPassed:     conversionPassed,
-		GPM:                  round(gpm, 2),
-		Status:               status,
-		Action:               action,
-		ProtectedTop3:        protected,
+		AdvertiserID:          formatID(advertiserID),
+		AdID:                  formatUintID(adID),
+		WindowMinutes:         window,
+		Cost:                  round(topCost, 2),
+		MinuteCost:            round(minuteCost, 2),
+		MinuteCostPassed:      minutePassed,
+		CTR:                   round(ctr, 6),
+		CTRPassed:             ctrPassed,
+		ConversionRate:        round(conversion, 6),
+		ConversionPassed:      conversionPassed,
+		GPM:                   round(gpm, 2),
+		Status:                status,
+		Action:                action,
+		ProtectedTop3:         protected,
 		ReplacementCandidates: candidates,
-		RuleConfig:           config,
-		MetricsComplete:      len(warnings) == 0,
-		Warnings:             warnings,
+		RuleConfig:            config,
+		MetricsComplete:       len(warnings) == 0,
+		Warnings:              warnings,
 	}, nil
 }
 
@@ -399,7 +523,11 @@ func (t *Tools) rotateMaterials(ctx context.Context, args map[string]any) (any, 
 	if err := t.requireWrite(args); err != nil {
 		return nil, err
 	}
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +605,11 @@ func (t *Tools) setPlanBudget(ctx context.Context, args map[string]any) (any, er
 	if err := t.requireWrite(args); err != nil {
 		return nil, err
 	}
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +642,11 @@ func (t *Tools) pausePlan(ctx context.Context, args map[string]any) (any, error)
 	if err := t.requireWrite(args); err != nil {
 		return nil, err
 	}
-	token, advertiserID, err := t.token(ctx)
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -544,18 +680,19 @@ func (t *Tools) requireWrite(args map[string]any) error {
 	return nil
 }
 
-func (t *Tools) token(ctx context.Context) (string, int64, error) {
+func (t *Tools) tokenFor(ctx context.Context, account tenantstore.AccountBinding) (string, int64, error) {
 	if t.service.TokenManager == nil {
 		return "", 0, errors.New("token manager is not initialized")
 	}
-	return t.service.AccessTokenFor(ctx, t.service.DefaultAdvertiserID)
+	return t.service.AccessTokenFor(ctx, account.AdvertiserID)
 }
 
-func (t *Tools) account(advertiserID int64) map[string]string {
+func (t *Tools) account(account tenantstore.AccountBinding) map[string]string {
 	return map[string]string{
-		"advertiser_id": formatID(advertiserID),
-		"aweme_id":      formatID(t.service.DefaultAwemeID),
-		"live_room_id":  formatID(t.service.DefaultLiveRoomID),
+		"account_id":    formatID(account.AdvertiserID),
+		"advertiser_id": formatID(account.AdvertiserID),
+		"aweme_id":      formatID(account.AwemeID),
+		"live_room_id":  formatID(account.LiveRoomID),
 	}
 }
 
@@ -628,23 +765,23 @@ func (t *Tools) fetchPlanMaterials(
 
 func normalizeMaterial(raw sdk.UniPromotionMaterialInfo, rank int) MaterialMetrics {
 	return MaterialMetrics{
-		MaterialID:     formatUintID(raw.MaterialId),
-		Title:          raw.MaterialName,
-		VideoID:        raw.VideoId,
-		AwemeItemID:    formatUintID(raw.AwemeItemId),
-		Status:         raw.MaterialStatus,
-		Cost:           raw.StatCost,
-		ShowCount:      raw.ShowCnt,
-		ClickCount:     raw.ClickCnt,
-		CTR:            raw.Ctr,
-		ConvertCount:   raw.ConvertCnt,
-		ConversionRate: raw.ConversionRate,
-		PayOrderCount:  raw.PayOrderAmount,
-		PayOrderGMV:    raw.PayOrderAmount,
-		ROI:            raw.Roi2,
-		GPM:            raw.Gpm,
-		CostRank:       rank,
-		ProtectedTop3:  rank <= 3,
+		MaterialID:      formatUintID(raw.MaterialId),
+		Title:           raw.MaterialName,
+		VideoID:         raw.VideoId,
+		AwemeItemID:     formatUintID(raw.AwemeItemId),
+		Status:          raw.MaterialStatus,
+		Cost:            raw.StatCost,
+		ShowCount:       raw.ShowCnt,
+		ClickCount:      raw.ClickCnt,
+		CTR:             raw.Ctr,
+		ConvertCount:    raw.ConvertCnt,
+		ConversionRate:  raw.ConversionRate,
+		PayOrderCount:   raw.PayOrderAmount,
+		PayOrderGMV:     raw.PayOrderAmount,
+		ROI:             raw.Roi2,
+		GPM:             raw.Gpm,
+		CostRank:        rank,
+		ProtectedTop3:   rank <= 3,
 		EligibleReplace: rank > 3,
 	}
 }
@@ -681,17 +818,17 @@ func weightedRate(materials []MaterialMetrics, field string) float64 {
 
 func planMap(plan sdk.UniPromotion) map[string]any {
 	return map[string]any{
-		"ad_id":         formatUintID(plan.AdId),
-		"name":          plan.AdName,
-		"status":        plan.Status,
-		"opt_status":    plan.OptStatus,
-		"budget":        plan.Budget,
-		"roi2_goal":     plan.Roi2Goal,
-		"aweme_id":      formatUintID(plan.AwemeId),
-		"cost":          plan.StatCost,
+		"ad_id":           formatUintID(plan.AdId),
+		"name":            plan.AdName,
+		"status":          plan.Status,
+		"opt_status":      plan.OptStatus,
+		"budget":          plan.Budget,
+		"roi2_goal":       plan.Roi2Goal,
+		"aweme_id":        formatUintID(plan.AwemeId),
+		"cost":            plan.StatCost,
 		"pay_order_count": plan.PayOrderCount,
-		"pay_order_gmv": plan.PayOrderGMV,
-		"roi":           plan.PayOrderROI,
+		"pay_order_gmv":   plan.PayOrderGMV,
+		"roi":             plan.PayOrderROI,
 	}
 }
 

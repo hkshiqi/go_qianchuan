@@ -58,6 +58,7 @@ func TestInitializeAndToolsList(t *testing.T) {
 	}
 	for _, name := range []string{
 		"qianchuan_get_status",
+		"qianchuan_list_accounts",
 		"qianchuan_list_plans",
 		"qianchuan_live_overview",
 		"qianchuan_evaluate_rules",
@@ -166,6 +167,43 @@ func TestToolArgumentsCannotSwitchWithSecretAliases(t *testing.T) {
 		if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"isError":true`)) {
 			t.Fatalf("credential alias was accepted for %s: status=%d body=%s", arguments, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestAccountSelectionIsAllowedButForeignTenantContextIsNot(t *testing.T) {
+	store := testTenantStore(t)
+	registerTestTenant(t, store, "tenant-a", 1001, "tenant-a-key-012345678901234567890123")
+	server := NewServer(store, tenantTestTools{})
+
+	call := func(arguments string) bool {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"qianchuan_get_status","arguments":`+arguments+`}}`,
+		))
+		request.Header.Set("Authorization", "Bearer tenant-a-key-012345678901234567890123")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+		var envelope struct {
+			Result struct {
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Result.IsError
+	}
+	if call(`{"account_id":"1001"}`) {
+		t.Fatal("account_id within the bearer tenant was rejected")
+	}
+	if !call(`{"tenant_id":"tenant-b"}`) {
+		t.Fatal("tenant_id argument was accepted")
+	}
+	if !call(`{"advertiser_id":"1001"}`) {
+		t.Fatal("advertiser_id argument was accepted")
 	}
 }
 
