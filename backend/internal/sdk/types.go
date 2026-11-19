@@ -41,8 +41,8 @@ type UserInfoReq struct {
 }
 
 type UserInfoRes struct {
-	Code    int64        `json:"code"`
-	Message string       `json:"message"`
+	Code    int64         `json:"code"`
+	Message string        `json:"message"`
 	Data    *UserInfoData `json:"data,omitempty"`
 }
 
@@ -163,6 +163,30 @@ type AgentAdvertiserItem struct {
 	AdvertiserId   int64  `json:"advertiser_id"`
 	AdvertiserName string `json:"advertiser_name"`
 	Company        string `json:"company"`
+}
+
+type CustomerCenterAdvertiserListReq struct {
+	AccessToken    string `json:"access_token"`
+	CustomerCenter int64  `json:"customer_center_id"`
+	Page           int64  `json:"page"`
+	PageSize       int64  `json:"page_size"`
+}
+
+type CustomerCenterAdvertiserListRes struct {
+	Code    int64  `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		List     []CustomerCenterAdvertiserItem `json:"list"`
+		PageInfo PageInfo                       `json:"page_info"`
+	} `json:"data"`
+}
+
+type CustomerCenterAdvertiserItem struct {
+	AdvertiserId   int64  `json:"advertiser_id"`
+	AdvertiserName string `json:"advertiser_name"`
+	AdvertiserType string `json:"advertiser_type"`
+	AccountName    string `json:"account_name"`
+	AccountType    string `json:"account_type"`
 }
 
 // ===== Aweme Authorized Types =====
@@ -741,24 +765,24 @@ type ReportCreativeGetRes struct {
 }
 
 type ReportMaterialGetReq struct {
-	AccessToken     string                     `json:"-"`
-	AdvertiserId    int64                      `json:"advertiser_id"`
-	StartDate       string                     `json:"start_date"`
-	EndDate         string                     `json:"end_date"`
-	Page            int64                      `json:"page"`
-	PageSize        int64                      `json:"page_size"`
-	Fields          []string                   `json:"fields,omitempty"`
+	AccessToken     string                      `json:"-"`
+	AdvertiserId    int64                       `json:"advertiser_id"`
+	StartDate       string                      `json:"start_date"`
+	EndDate         string                      `json:"end_date"`
+	Page            int64                       `json:"page"`
+	PageSize        int64                       `json:"page_size"`
+	Fields          []string                    `json:"fields,omitempty"`
 	Filtering       *ReportMaterialGetFiltering `json:"filtering,omitempty"`
-	TimeGranularity string                     `json:"time_granularity,omitempty"`
-	OrderField      string                     `json:"order_field,omitempty"`
-	OrderType       string                     `json:"order_type,omitempty"`
+	TimeGranularity string                      `json:"time_granularity,omitempty"`
+	OrderField      string                      `json:"order_field,omitempty"`
+	OrderType       string                      `json:"order_type,omitempty"`
 }
 
 type ReportMaterialGetFiltering struct {
-	AdIds         []int64 `json:"ad_ids,omitempty"`
-	MaterialId    []int64 `json:"material_id,omitempty"`
-	MarketingGoal string  `json:"marketing_goal,omitempty"`
-	MaterialType  string  `json:"material_type,omitempty"`
+	AdIds         []int64  `json:"ad_ids,omitempty"`
+	MaterialId    []int64  `json:"material_id,omitempty"`
+	MarketingGoal string   `json:"marketing_goal,omitempty"`
+	MaterialType  string   `json:"material_type,omitempty"`
 	AnalysisType  []string `json:"analysis_type,omitempty"`
 }
 
@@ -1470,8 +1494,8 @@ type UniPromotionStatusUpdateRes struct {
 	Message string `json:"message"`
 	Data    struct {
 		Results []UniPromotionStatusResult `json:"results,omitempty"`
-		AdIds   []uint64                    `json:"ad_ids,omitempty"`
-		Errors  []UniPromotionOpError       `json:"errors,omitempty"`
+		AdIds   []uint64                   `json:"ad_ids,omitempty"`
+		Errors  []UniPromotionOpError      `json:"errors,omitempty"`
 	} `json:"data"`
 }
 
@@ -1582,44 +1606,44 @@ type UniPromotionMaterialGetRes struct {
 }
 
 type UniPromotionMaterialInfo struct {
-	MaterialId        uint64   `json:"material_id"`
-	VideoId           string   `json:"video_id,omitempty"`
-	VideoCoverId      string   `json:"video_cover_id,omitempty"`
-	AwemeItemId       uint64   `json:"aweme_item_id,omitempty"`
-	ImageId           string   `json:"image_id,omitempty"`
-	ImageMode         string   `json:"image_mode,omitempty"`
-	MaterialName      string   `json:"material_name,omitempty"`
-	MaterialType      string   `json:"material_type,omitempty"`
-	MaterialStatus    string   `json:"material_status,omitempty"`
-	AuditStatus       string   `json:"audit_status,omitempty"`
-	IsDeleted         bool     `json:"is_delete,omitempty"`
-	DeliveryNotReason []string `json:"delivery_not_reason,omitempty"`
-	CoverImage        string   `json:"cover_image,omitempty"`
-	ProductId         uint64   `json:"product_id,omitempty"`
-	ProductName       string   `json:"product_name,omitempty"`
-	StatCost          float64  `json:"stat_cost,omitempty"`
-	ShowCnt           int64    `json:"show_cnt,omitempty"`
-	ClickCnt          int64    `json:"click_cnt,omitempty"`
-	ConvertCnt        int64    `json:"convert_cnt,omitempty"`
-	Ctr               float64  `json:"ctr,omitempty"`
-	ConversionRate    float64  `json:"conversion_rate,omitempty"`
-	PayOrderAmount    float64  `json:"pay_order_amount,omitempty"`
-	Gpm               float64  `json:"gpm,omitempty"`
-	Roi2              float64  `json:"roi2,omitempty"`
-	LiveShowCount     int64    `json:"live_show_count,omitempty"`
-	LiveWatchCount    int64    `json:"live_watch_count,omitempty"`
-	LiveCtr           float64  `json:"live_ctr,omitempty"`
-	LiveConversionRate float64 `json:"live_conversion_rate,omitempty"`
-	LiveShowCountExcludeVideo      int64   `json:"live_show_count_exclude_video,omitempty"`
-	LiveWatchCountExcludeVideo     int64   `json:"live_watch_count_exclude_video,omitempty"`
-	LiveCtrExcludeVideo            float64 `json:"live_ctr_exclude_video,omitempty"`
-	LiveConversionRateExcludeVideo float64 `json:"live_conversion_rate_exclude_video,omitempty"`
+	MaterialId                     uint64   `json:"material_id"`
+	VideoId                        string   `json:"video_id,omitempty"`
+	VideoCoverId                   string   `json:"video_cover_id,omitempty"`
+	AwemeItemId                    uint64   `json:"aweme_item_id,omitempty"`
+	ImageId                        string   `json:"image_id,omitempty"`
+	ImageMode                      string   `json:"image_mode,omitempty"`
+	MaterialName                   string   `json:"material_name,omitempty"`
+	MaterialType                   string   `json:"material_type,omitempty"`
+	MaterialStatus                 string   `json:"material_status,omitempty"`
+	AuditStatus                    string   `json:"audit_status,omitempty"`
+	IsDeleted                      bool     `json:"is_delete,omitempty"`
+	DeliveryNotReason              []string `json:"delivery_not_reason,omitempty"`
+	CoverImage                     string   `json:"cover_image,omitempty"`
+	ProductId                      uint64   `json:"product_id,omitempty"`
+	ProductName                    string   `json:"product_name,omitempty"`
+	StatCost                       float64  `json:"stat_cost,omitempty"`
+	ShowCnt                        int64    `json:"show_cnt,omitempty"`
+	ClickCnt                       int64    `json:"click_cnt,omitempty"`
+	ConvertCnt                     int64    `json:"convert_cnt,omitempty"`
+	Ctr                            float64  `json:"ctr,omitempty"`
+	ConversionRate                 float64  `json:"conversion_rate,omitempty"`
+	PayOrderAmount                 float64  `json:"pay_order_amount,omitempty"`
+	Gpm                            float64  `json:"gpm,omitempty"`
+	Roi2                           float64  `json:"roi2,omitempty"`
+	LiveShowCount                  int64    `json:"live_show_count,omitempty"`
+	LiveWatchCount                 int64    `json:"live_watch_count,omitempty"`
+	LiveCtr                        float64  `json:"live_ctr,omitempty"`
+	LiveConversionRate             float64  `json:"live_conversion_rate,omitempty"`
+	LiveShowCountExcludeVideo      int64    `json:"live_show_count_exclude_video,omitempty"`
+	LiveWatchCountExcludeVideo     int64    `json:"live_watch_count_exclude_video,omitempty"`
+	LiveCtrExcludeVideo            float64  `json:"live_ctr_exclude_video,omitempty"`
+	LiveConversionRateExcludeVideo float64  `json:"live_conversion_rate_exclude_video,omitempty"`
 }
 
 type UniPromotionMaterialAddReq struct {
-	AccessToken  string                 `json:"-"`
-	AdvertiserId uint64                 `json:"advertiser_id"`
-	AdId         uint64                 `json:"ad_id"`
+	AccessToken   string                 `json:"-"`
+	AdvertiserId  uint64                 `json:"advertiser_id"`
+	AdId          uint64                 `json:"ad_id"`
 	VideoMaterial []UniPromotionMaterial `json:"video_material"`
 }
 

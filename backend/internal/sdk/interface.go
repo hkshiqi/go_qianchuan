@@ -23,6 +23,7 @@ type QianchuanClient interface {
 	AdvertiserInfo(ctx context.Context, req AdvertiserInfoReq) (*AdvertiserInfoRes, error)
 	ShopAdvertiserList(ctx context.Context, req ShopAdvertiserListReq) (*ShopAdvertiserListRes, error)
 	AgentAdvertiserList(ctx context.Context, req AgentAdvertiserListReq) (*AgentAdvertiserListRes, error)
+	CustomerCenterAdvertiserList(ctx context.Context, req CustomerCenterAdvertiserListReq) (*CustomerCenterAdvertiserListRes, error)
 	AwemeAuthorizedGet(ctx context.Context, req AwemeAuthorizedGetReq) (*AwemeAuthorizedGetRes, error)
 	ProductAvailableGet(ctx context.Context, req ProductAvailableGetReq) (*ProductAvailableGetRes, error)
 
@@ -32,10 +33,9 @@ type QianchuanClient interface {
 	CampaignUpdate(ctx context.Context, req CampaignUpdateReq) (*CampaignUpdateRes, error)
 	BatchCampaignStatusUpdate(ctx context.Context, req BatchCampaignStatusUpdateReq) (*BatchCampaignStatusUpdateRes, error)
 
-
-		// ===== Advertiser Budget =====
-		AdvertiserBudgetGet(ctx context.Context, req AdvertiserBudgetGetReq) (*AdvertiserBudgetGetRes, error)
-		AdvertiserBudgetUpdate(ctx context.Context, req AdvertiserBudgetUpdateReq) (*AdvertiserBudgetUpdateRes, error)
+	// ===== Advertiser Budget =====
+	AdvertiserBudgetGet(ctx context.Context, req AdvertiserBudgetGetReq) (*AdvertiserBudgetGetRes, error)
+	AdvertiserBudgetUpdate(ctx context.Context, req AdvertiserBudgetUpdateReq) (*AdvertiserBudgetUpdateRes, error)
 
 	// ===== Ad =====
 	AdListGet(ctx context.Context, req AdListGetReq) (*AdListGetRes, error)
@@ -129,9 +129,9 @@ type QianchuanClient interface {
 // QianchuanError 统一错误类型
 // 封装底层 SDK 的错误信息，便于统一处理和日志记录
 type QianchuanError struct {
-	Code    int64  `json:"code"`     // SDK 返回的错误码
-	Message string `json:"message"`  // SDK 返回的错误信息
-	Err     error  `json:"-"`        // 原始错误（用于 error 链）
+	Code    int64  `json:"code"`    // SDK 返回的错误码
+	Message string `json:"message"` // SDK 返回的错误信息
+	Err     error  `json:"-"`       // 原始错误（用于 error 链）
 }
 
 func (e *QianchuanError) Error() string {

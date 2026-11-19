@@ -102,7 +102,7 @@ func (h *OAuthHandler) Callback(c *gin.Context) {
 	}
 	if err := h.tokens.SaveOAuthSession(c.Request.Context(), *tenant, tokenResponse.Data, accountID); err != nil {
 		if errors.Is(err, mcp.ErrTenantAccountMismatch) {
-			fail(http.StatusForbidden, "授权拒绝", "本次授权的广告主与租户绑定账户不一致")
+			fail(http.StatusForbidden, "授权拒绝", "本次授权范围内未找到租户绑定的广告账户")
 			return
 		}
 		log.Printf("MCP OAuth token persistence failed: %v", err)

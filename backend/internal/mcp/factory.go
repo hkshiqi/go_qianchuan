@@ -104,16 +104,28 @@ func (f *TenantFactory) SaveOAuthSession(
 	if oauthData == nil {
 		return errors.New("OAuth response is required")
 	}
+	if strings.TrimSpace(oauthData.AccessToken) == "" || strings.TrimSpace(oauthData.RefreshToken) == "" {
+		return errors.New("OAuth response is missing access or refresh token")
+	}
 	matchedAccounts := matchingAdvertisers(oauthData, tenant.AccountList(), accountID)
+	if len(matchedAccounts) == 0 {
+		var err error
+		matchedAccounts, err = f.resolveOAuthAdvertisers(
+			ctx,
+			oauthData.AccessToken,
+			tenant.AccountList(),
+			accountID,
+		)
+		if err != nil {
+			return err
+		}
+	}
 	if len(matchedAccounts) == 0 {
 		return ErrTenantAccountMismatch
 	}
 	runtime, err := f.runtimeFor(tenant)
 	if err != nil {
 		return err
-	}
-	if strings.TrimSpace(oauthData.AccessToken) == "" || strings.TrimSpace(oauthData.RefreshToken) == "" {
-		return errors.New("OAuth response is missing access or refresh token")
 	}
 	for _, advertiserID := range matchedAccounts {
 		value := session.NewSessionFromTokenResponse(&session.TokenResponse{
@@ -127,6 +139,191 @@ func (f *TenantFactory) SaveOAuthSession(
 		}
 	}
 	return nil
+}
+
+// resolveOAuthAdvertisers maps the workspace, shop, or agency root account
+// returned by OAuth to the advertiser accounts bound to this tenant.
+func (f *TenantFactory) resolveOAuthAdvertisers(
+	ctx context.Context,
+	accessToken string,
+	accounts []tenantstore.AccountBinding,
+	accountID int64,
+) ([]int64, error) {
+	desired := make(map[int64]bool, len(accounts))
+	for _, account := range accounts {
+		if accountID > 0 && account.AdvertiserID != accountID {
+			continue
+		}
+		desired[account.AdvertiserID] = true
+	}
+	if len(desired) == 0 {
+		return nil, ErrTenantAccountMismatch
+	}
+
+	response, err := f.client.AdvertiserList(ctx, sdk.AdvertiserListReq{
+		AccessToken: accessToken,
+		AppId:       f.appID,
+		Secret:      f.appSecret,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list OAuth root accounts: %w", err)
+	}
+	if response == nil || response.Code != 0 {
+		if response != nil {
+			return nil, fmt.Errorf("list OAuth root accounts[%d]: %s", response.Code, response.Message)
+		}
+		return nil, errors.New("list OAuth root accounts returned an empty response")
+	}
+
+	found := make(map[int64]bool, len(desired))
+	for _, root := range response.Data.List {
+		rootID := root.AdvertiserId
+		if rootID <= 0 {
+			continue
+		}
+		if desired[rootID] {
+			found[rootID] = true
+		}
+		if len(found) == len(desired) {
+			break
+		}
+
+		var children []int64
+		switch root.AccountRole {
+		case "CUSTOMER_ADMIN", "CUSTOMER_OPERATOR":
+			children, err = f.customerCenterAdvertisers(ctx, accessToken, rootID)
+		case "PLATFORM_ROLE_SHOP_ACCOUNT":
+			children, err = f.shopAdvertisers(ctx, accessToken, rootID)
+		case "PLATFORM_ROLE_QIANCHUAN_AGENT", "AGENT", "CHILD_AGENT", "AGENT_SYSTEM_ACCOUNT":
+			children, err = f.agentAdvertisers(ctx, accessToken, rootID)
+		default:
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, childID := range children {
+			if desired[childID] {
+				found[childID] = true
+			}
+		}
+		if len(found) == len(desired) {
+			break
+		}
+	}
+
+	matched := make([]int64, 0, len(found))
+	for _, account := range accounts {
+		if accountID > 0 && account.AdvertiserID != accountID {
+			continue
+		}
+		if found[account.AdvertiserID] {
+			matched = append(matched, account.AdvertiserID)
+		}
+	}
+	return matched, nil
+}
+
+func (f *TenantFactory) customerCenterAdvertisers(
+	ctx context.Context,
+	accessToken string,
+	rootID int64,
+) ([]int64, error) {
+	var result []int64
+	for page := int64(1); page <= 100; page++ {
+		response, err := f.client.CustomerCenterAdvertiserList(ctx, sdk.CustomerCenterAdvertiserListReq{
+			AccessToken:    accessToken,
+			CustomerCenter: rootID,
+			Page:           page,
+			PageSize:       100,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list workspace advertiser accounts: %w", err)
+		}
+		if response == nil || response.Code != 0 {
+			if response != nil {
+				return nil, fmt.Errorf("list workspace advertiser accounts[%d]: %s", response.Code, response.Message)
+			}
+			return nil, errors.New("list workspace advertiser accounts returned an empty response")
+		}
+		for _, item := range response.Data.List {
+			if item.AdvertiserId > 0 {
+				result = append(result, item.AdvertiserId)
+			}
+		}
+		if len(response.Data.List) < 100 || response.Data.PageInfo.TotalPage <= int(page) {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (f *TenantFactory) shopAdvertisers(
+	ctx context.Context,
+	accessToken string,
+	rootID int64,
+) ([]int64, error) {
+	var result []int64
+	for page := int64(1); page <= 100; page++ {
+		response, err := f.client.ShopAdvertiserList(ctx, sdk.ShopAdvertiserListReq{
+			AccessToken: accessToken,
+			ShopId:      rootID,
+			Page:        page,
+			PageSize:    100,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list shop advertiser accounts: %w", err)
+		}
+		if response == nil || response.Code != 0 {
+			if response != nil {
+				return nil, fmt.Errorf("list shop advertiser accounts[%d]: %s", response.Code, response.Message)
+			}
+			return nil, errors.New("list shop advertiser accounts returned an empty response")
+		}
+		for _, item := range response.Data.List {
+			if item.AdvertiserId > 0 {
+				result = append(result, item.AdvertiserId)
+			}
+		}
+		if len(response.Data.List) < 100 || response.Data.PageInfo.TotalPage <= int(page) {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (f *TenantFactory) agentAdvertisers(
+	ctx context.Context,
+	accessToken string,
+	rootID int64,
+) ([]int64, error) {
+	var result []int64
+	for page := int64(1); page <= 100; page++ {
+		response, err := f.client.AgentAdvertiserList(ctx, sdk.AgentAdvertiserListReq{
+			AccessToken:  accessToken,
+			AdvertiserId: rootID,
+			Page:         page,
+			PageSize:     100,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list agent advertiser accounts: %w", err)
+		}
+		if response == nil || response.Code != 0 {
+			if response != nil {
+				return nil, fmt.Errorf("list agent advertiser accounts[%d]: %s", response.Code, response.Message)
+			}
+			return nil, errors.New("list agent advertiser accounts returned an empty response")
+		}
+		for _, item := range response.Data.List {
+			if item.AdvertiserId > 0 {
+				result = append(result, item.AdvertiserId)
+			}
+		}
+		if len(response.Data.List) < 100 || response.Data.PageInfo.TotalPage <= int(page) {
+			break
+		}
+	}
+	return result, nil
 }
 
 func (f *TenantFactory) TokenStorePath(tenantID string) (string, error) {

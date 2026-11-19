@@ -28,15 +28,19 @@ import (
 	agentAPI "github.com/bububa/oceanengine/marketing-api/api/agent"
 	agentModel "github.com/bububa/oceanengine/marketing-api/model/agent"
 
+	// Customer center API (for workspaces authorized by CUSTOMER_ADMIN)
+	customerCenterAPI "github.com/bububa/oceanengine/marketing-api/api/customercenter"
+	customerCenterModel "github.com/bububa/oceanengine/marketing-api/model/customercenter"
+
 	// Tools APIs
 	toolsAPI "github.com/bububa/oceanengine/marketing-api/api/tools"
-	toolsModel "github.com/bububa/oceanengine/marketing-api/model/tools"
 	toolsAwemeAPI "github.com/bububa/oceanengine/marketing-api/api/tools/aweme"
-	toolsAwemeModel "github.com/bububa/oceanengine/marketing-api/model/tools/aweme"
-	interestactionAPI "github.com/bububa/oceanengine/marketing-api/api/tools/interestaction"
-	interestactionModel "github.com/bububa/oceanengine/marketing-api/model/tools/interestaction"
 	creativewordAPI "github.com/bububa/oceanengine/marketing-api/api/tools/creativeword"
+	interestactionAPI "github.com/bububa/oceanengine/marketing-api/api/tools/interestaction"
+	toolsModel "github.com/bububa/oceanengine/marketing-api/model/tools"
+	toolsAwemeModel "github.com/bububa/oceanengine/marketing-api/model/tools/aweme"
 	creativewordModel "github.com/bububa/oceanengine/marketing-api/model/tools/creativeword"
+	interestactionModel "github.com/bububa/oceanengine/marketing-api/model/tools/interestaction"
 
 	// Qianchuan APIs
 	adAPI "github.com/bububa/oceanengine/marketing-api/api/qianchuan/ad"
@@ -336,6 +340,45 @@ func (c *OceanengineClient) AgentAdvertiserList(ctx context.Context, req AgentAd
 		}
 	}
 
+	return res, nil
+}
+
+func (c *OceanengineClient) CustomerCenterAdvertiserList(ctx context.Context, req CustomerCenterAdvertiserListReq) (*CustomerCenterAdvertiserListRes, error) {
+	oeReq := &customerCenterModel.AdvertiserListRequest{
+		CcAccountID:   uint64(req.CustomerCenter),
+		Page:          int(req.Page),
+		PageSize:      int(req.PageSize),
+		AccountSource: "QIANCHUAN",
+	}
+	data, err := customerCenterAPI.AdvertiserList(ctx, c.client, req.AccessToken, oeReq)
+	if err != nil {
+		return &CustomerCenterAdvertiserListRes{
+			Code:    500,
+			Message: err.Error(),
+		}, nil
+	}
+	res := &CustomerCenterAdvertiserListRes{Code: 0, Message: "success"}
+	if data == nil {
+		return res, nil
+	}
+	res.Data.List = make([]CustomerCenterAdvertiserItem, 0, len(data.List))
+	for _, item := range data.List {
+		res.Data.List = append(res.Data.List, CustomerCenterAdvertiserItem{
+			AdvertiserId:   int64(item.AccountId),
+			AdvertiserName: item.AccountName,
+			AdvertiserType: string(item.AccountType),
+			AccountName:    item.AccountName,
+			AccountType:    string(item.AccountType),
+		})
+	}
+	if data.PageInfo != nil {
+		res.Data.PageInfo = PageInfo{
+			Page:        data.PageInfo.Page,
+			PageSize:    data.PageInfo.PageSize,
+			TotalNumber: int64(data.PageInfo.TotalNumber),
+			TotalPage:   int(data.PageInfo.TotalPage),
+		}
+	}
 	return res, nil
 }
 
@@ -1071,10 +1114,10 @@ func (c *OceanengineClient) FileImageGet(ctx context.Context, req FileImageGetRe
 
 	if req.Filtering != nil {
 		oeReq.Filtering = &fileModel.ImageGetFilter{
-			ImageIDs:    req.Filtering.ImageIds,
-			Sigatures:   req.Filtering.Signatures,
-			StartTIme:   req.Filtering.StartTime,
-			EndTime:     req.Filtering.EndTime,
+			ImageIDs:  req.Filtering.ImageIds,
+			Sigatures: req.Filtering.Signatures,
+			StartTIme: req.Filtering.StartTime,
+			EndTime:   req.Filtering.EndTime,
 		}
 	}
 
@@ -2433,15 +2476,15 @@ func (c *OceanengineClient) PrivatewordsUpdate(ctx context.Context, req Privatew
 
 func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromotionListReq) (*UniPromotionListRes, error) {
 	oeReq := &uniPromotionModel.ListRequest{
-		AdvertiserID: req.AdvertiserId,
-		StartTime:    req.StartTime,
-		EndTime:      req.EndTime,
+		AdvertiserID:  req.AdvertiserId,
+		StartTime:     req.StartTime,
+		EndTime:       req.EndTime,
 		MarketingGoal: enum.MarketingGoal(req.MarketingGoal),
-		Fields:       req.Fields,
-		OrderField:   req.OrderField,
-		OrderType:    enum.OrderType(strings.ToUpper(req.OrderType)),
-		Page:         req.Page,
-		PageSize:     req.PageSize,
+		Fields:        req.Fields,
+		OrderField:    req.OrderField,
+		OrderType:     enum.OrderType(strings.ToUpper(req.OrderType)),
+		Page:          req.Page,
+		PageSize:      req.PageSize,
 	}
 	if req.Filtering != nil {
 		oeReq.Filtering = &uniPromotionModel.ListFilter{
@@ -2505,9 +2548,9 @@ func (c *OceanengineClient) UniPromotionDetail(ctx context.Context, req UniPromo
 
 func (c *OceanengineClient) UniPromotionCreate(ctx context.Context, req UniPromotionCreateReq) (*UniPromotionCreateRes, error) {
 	oeReq := &uniPromotionModel.CreateRequest{
-		AdvertiserID:  req.AdvertiserId,
-		AwemeID:       req.AwemeId,
-		MarketingGoal: "LIVE_PROM_GOODS",
+		AdvertiserID:    req.AdvertiserId,
+		AwemeID:         req.AwemeId,
+		MarketingGoal:   "LIVE_PROM_GOODS",
 		DeliverySetting: &uniPromotionModel.DeliverySetting{},
 		CreativeSetting: &uniPromotionModel.CreativeSetting{},
 		ProgrammaticCreativeMediaList: []uniPromotionModel.ProgrammaticCreativeMedia{
@@ -2558,8 +2601,8 @@ func (c *OceanengineClient) UniPromotionCreate(ctx context.Context, req UniPromo
 
 func (c *OceanengineClient) UniPromotionUpdate(ctx context.Context, req UniPromotionUpdateReq) (*UniPromotionUpdateRes, error) {
 	oeReq := &uniPromotionModel.UpdateRequest{
-		AdvertiserID: req.AdvertiserId,
-		AdID:         req.AdId,
+		AdvertiserID:    req.AdvertiserId,
+		AdID:            req.AdId,
 		DeliverySetting: &uniPromotionModel.DeliverySetting{},
 		CreativeSetting: &uniPromotionModel.CreativeSetting{},
 	}

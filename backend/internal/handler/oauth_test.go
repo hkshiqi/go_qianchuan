@@ -21,6 +21,8 @@ type oauthTestClient struct {
 	sdk.QianchuanClient
 	advertiserID  int64
 	advertiserIDs []int64
+	roots         []sdk.AdvertiserListItem
+	workspaceIDs  []int64
 }
 
 func (c oauthTestClient) OauthAccessToken(context.Context, sdk.OauthAccessTokenReq) (*sdk.OauthAccessTokenRes, error) {
@@ -35,6 +37,24 @@ func (c oauthTestClient) OauthAccessToken(context.Context, sdk.OauthAccessTokenR
 			AdvertiserIds:         c.advertiserIDs,
 		},
 	}, nil
+}
+
+func (c oauthTestClient) AdvertiserList(context.Context, sdk.AdvertiserListReq) (*sdk.AdvertiserListRes, error) {
+	return &sdk.AdvertiserListRes{
+		Code: 0,
+		Data: struct {
+			List []sdk.AdvertiserListItem `json:"list"`
+		}{List: c.roots},
+	}, nil
+}
+
+func (c oauthTestClient) CustomerCenterAdvertiserList(context.Context, sdk.CustomerCenterAdvertiserListReq) (*sdk.CustomerCenterAdvertiserListRes, error) {
+	response := &sdk.CustomerCenterAdvertiserListRes{Code: 0, Message: "success"}
+	for _, id := range c.workspaceIDs {
+		response.Data.List = append(response.Data.List, sdk.CustomerCenterAdvertiserItem{AdvertiserId: id})
+	}
+	response.Data.PageInfo.TotalPage = 1
+	return response, nil
 }
 
 func TestOAuthCallbackRejectsMismatchedAdvertiser(t *testing.T) {
@@ -84,6 +104,37 @@ func TestOAuthCallbackRejectsInvalidState(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("invalid state persisted a token: %v", err)
+	}
+}
+
+func TestOAuthCallbackResolvesWorkspaceRootToBoundAdvertiser(t *testing.T) {
+	handler, factory, tenant := buildOAuthTestHandler(t, oauthTestClient{
+		advertiserID: 9001,
+		roots: []sdk.AdvertiserListItem{{
+			AdvertiserId: 9001,
+			AccountRole:  "CUSTOMER_ADMIN",
+		}},
+		workspaceIDs: []int64{1001, 9999},
+	})
+	state, err := handler.states.Issue(tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.Callback(oauthContext(t, state))
+
+	path, err := factory.TokenStorePath(tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytesContains(raw, []byte(`"1001"`)) {
+		t.Fatal("bound workspace advertiser 1001 was not persisted")
+	}
+	if bytesContains(raw, []byte(`"9999"`)) {
+		t.Fatal("workspace advertiser outside tenant binding was persisted")
 	}
 }
 

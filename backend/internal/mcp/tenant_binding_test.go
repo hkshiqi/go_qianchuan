@@ -13,6 +13,54 @@ import (
 
 type tenantFactoryTestClient struct {
 	sdk.QianchuanClient
+	roots           []sdk.AdvertiserListItem
+	workspaceIDs    []int64
+	shopIDs         []int64
+	agentIDs        []int64
+	rootListCode    int64
+	rootListErr     error
+	customerListErr error
+}
+
+func (c tenantFactoryTestClient) AdvertiserList(context.Context, sdk.AdvertiserListReq) (*sdk.AdvertiserListRes, error) {
+	if c.rootListErr != nil {
+		return nil, c.rootListErr
+	}
+	response := &sdk.AdvertiserListRes{Code: c.rootListCode, Message: "test"}
+	if response.Code == 0 {
+		response.Data.List = c.roots
+	}
+	return response, nil
+}
+
+func (c tenantFactoryTestClient) CustomerCenterAdvertiserList(context.Context, sdk.CustomerCenterAdvertiserListReq) (*sdk.CustomerCenterAdvertiserListRes, error) {
+	if c.customerListErr != nil {
+		return nil, c.customerListErr
+	}
+	response := &sdk.CustomerCenterAdvertiserListRes{Code: 0, Message: "success"}
+	for _, id := range c.workspaceIDs {
+		response.Data.List = append(response.Data.List, sdk.CustomerCenterAdvertiserItem{AdvertiserId: id})
+	}
+	response.Data.PageInfo.TotalPage = 1
+	return response, nil
+}
+
+func (c tenantFactoryTestClient) ShopAdvertiserList(context.Context, sdk.ShopAdvertiserListReq) (*sdk.ShopAdvertiserListRes, error) {
+	response := &sdk.ShopAdvertiserListRes{Code: 0, Message: "success"}
+	for _, id := range c.shopIDs {
+		response.Data.List = append(response.Data.List, sdk.ShopAdvertiserItem{AdvertiserId: id})
+	}
+	response.Data.PageInfo.TotalPage = 1
+	return response, nil
+}
+
+func (c tenantFactoryTestClient) AgentAdvertiserList(context.Context, sdk.AgentAdvertiserListReq) (*sdk.AgentAdvertiserListRes, error) {
+	response := &sdk.AgentAdvertiserListRes{Code: 0, Message: "success"}
+	for _, id := range c.agentIDs {
+		response.Data.List = append(response.Data.List, sdk.AgentAdvertiserItem{AdvertiserId: id})
+	}
+	response.Data.PageInfo.TotalPage = 1
+	return response, nil
 }
 
 func TestOAuthAdvertiserMustMatchTenantBinding(t *testing.T) {
@@ -238,5 +286,139 @@ func TestOAuthSessionOnlyPersistsSelectedAccount(t *testing.T) {
 	}
 	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1002); err != nil {
 		t.Fatalf("selected account was not persisted: %v", err)
+	}
+}
+
+func TestWorkspaceRootResolvesToBoundAdvertiser(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewTenantFactory(TenantFactoryOptions{
+		Client: tenantFactoryTestClient{
+			roots: []sdk.AdvertiserListItem{{
+				AdvertiserId: 9001,
+				AccountRole:  "CUSTOMER_ADMIN",
+			}},
+			workspaceIDs: []int64{1001, 2002},
+		},
+		AppID:              123,
+		AppSecret:          "test-secret",
+		TokenRoot:          filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState: func(string) (string, error) {
+			return "state", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := tenantstore.Tenant{
+		ID:           "owner",
+		Name:         "owner",
+		AdvertiserID: 1001,
+	}
+	if err := factory.SaveOAuthSession(context.Background(), tenant, &sdk.OauthAccessTokenResData{
+		AccessToken:           "access-token",
+		RefreshToken:          "refresh-token",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 3600,
+		AdvertiserId:          9001,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := factory.ToolsFor(context.Background(), &tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := caller.(*Tools)
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1001); err != nil {
+		t.Fatalf("bound advertiser token was not persisted: %v", err)
+	}
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 2002); err == nil {
+		t.Fatal("workspace child outside tenant binding was persisted")
+	}
+}
+
+func TestWorkspaceRootResolvesOnlySelectedAccount(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewTenantFactory(TenantFactoryOptions{
+		Client: tenantFactoryTestClient{
+			roots: []sdk.AdvertiserListItem{{
+				AdvertiserId: 9001,
+				AccountRole:  "CUSTOMER_OPERATOR",
+			}},
+			workspaceIDs: []int64{1001, 1002},
+		},
+		AppID:              123,
+		AppSecret:          "test-secret",
+		TokenRoot:          filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState: func(string) (string, error) {
+			return "state", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := tenantstore.Tenant{
+		ID:           "owner",
+		Name:         "owner",
+		AdvertiserID: 1001,
+		Accounts: []tenantstore.AccountBinding{
+			{AdvertiserID: 1001},
+			{AdvertiserID: 1002},
+		},
+	}
+	if err := factory.SaveOAuthSession(context.Background(), tenant, &sdk.OauthAccessTokenResData{
+		AccessToken:           "access-token",
+		RefreshToken:          "refresh-token",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 3600,
+		AdvertiserId:          9001,
+	}, 1002); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := factory.ToolsFor(context.Background(), &tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := caller.(*Tools)
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1001); err == nil {
+		t.Fatal("unselected workspace account was persisted")
+	}
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1002); err != nil {
+		t.Fatalf("selected workspace account was not persisted: %v", err)
+	}
+}
+
+func TestWorkspaceWithoutBoundAdvertiserIsRejected(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewTenantFactory(TenantFactoryOptions{
+		Client: tenantFactoryTestClient{
+			roots: []sdk.AdvertiserListItem{{
+				AdvertiserId: 9001,
+				AccountRole:  "CUSTOMER_ADMIN",
+			}},
+			workspaceIDs: []int64{2002, 2003},
+		},
+		AppID:              123,
+		AppSecret:          "test-secret",
+		TokenRoot:          filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState: func(string) (string, error) {
+			return "state", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := tenantstore.Tenant{ID: "owner", Name: "owner", AdvertiserID: 1001}
+	err = factory.SaveOAuthSession(context.Background(), tenant, &sdk.OauthAccessTokenResData{
+		AccessToken:           "access-token",
+		RefreshToken:          "refresh-token",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 3600,
+		AdvertiserId:          9001,
+	}, 0)
+	if !errors.Is(err, ErrTenantAccountMismatch) {
+		t.Fatalf("SaveOAuthSession error = %v, want ErrTenantAccountMismatch", err)
 	}
 }
