@@ -11,6 +11,7 @@ import (
 	"github.com/CriarBrand/qianchuan-backend/internal/middleware"
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
+	"github.com/CriarBrand/qianchuan-backend/internal/util"
 	"github.com/CriarBrand/qianchuan-backend/pkg/session"
 	"github.com/gin-gonic/gin"
 )
@@ -447,40 +448,92 @@ func (h *ReportHandler) ExportReport(c *gin.Context) {
 // GetMaterialReport 获取素材报表
 // POST /qianchuan/report/material/get
 func (h *ReportHandler) GetMaterialReport(c *gin.Context) {
-	userSession, _ := middleware.GetUserSession(c)
+	userSession, ok := middleware.GetUserSession(c)
+	if !ok {
+		util.Unauthorized(c, "未登录")
+		return
+	}
 
 	var req struct {
-		StartDate string   `json:"start_date"`
-		EndDate   string   `json:"end_date"`
-		Fields    []string `json:"fields"`
-		Page      int64    `json:"page"`
-		PageSize  int64    `json:"page_size"`
+		StartDate       string                     `json:"start_date"`
+		EndDate         string                     `json:"end_date"`
+		Fields          []string                   `json:"fields"`
+		Page            int64                      `json:"page"`
+		PageSize        int64                      `json:"page_size"`
+		OrderField      string                     `json:"order_field"`
+		OrderType       string                     `json:"order_type"`
+		TimeGranularity string                     `json:"time_granularity"`
+		Filtering       *sdk.ReportMaterialGetFiltering `json:"filtering"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		util.BadRequest(c, "参数错误: "+err.Error())
+		return
+	}
+	if req.StartDate == "" || req.EndDate == "" {
+		util.BadRequest(c, "start_date 和 end_date 必填")
+		return
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 1000 {
+		req.PageSize = 100
+	}
+	if len(req.Fields) == 0 {
+		req.Fields = []string{
+			"stat_cost",
+			"show_cnt",
+			"click_cnt",
+			"ctr",
+			"convert_cnt",
+			"conversion_rate",
+			"total_pay_order_gmv_for_roi2",
+			"total_prepay_and_pay_order_roi2",
+		}
+	}
+	if req.OrderField == "" {
+		req.OrderField = "stat_cost"
+	}
+	if req.OrderType == "" {
+		req.OrderType = "DESC"
+	}
 
 	log.Printf("Get material report: start_date=%s, end_date=%s, fields=%v",
 		req.StartDate, req.EndDate, req.Fields)
 
-	// SDK 暂未实现素材报表接口，返回 501
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"code":    501,
-		"message": "素材报表功能暂未实现",
-		"hint":    "SDK 正在对接千川素材报表API，请稍后使用。建议使用创意报表查看素材效果",
-		"data": gin.H{
-			"list":  []gin.H{},
-			"total": 0,
-			"page":  req.Page,
-			"size":  req.PageSize,
+	resp, err := h.service.Client.ReportMaterialGet(
+		c.Request.Context(),
+		sdk.ReportMaterialGetReq{
+			AccessToken:     userSession.AccessToken,
+			AdvertiserId:    userSession.AdvertiserID,
+			StartDate:       req.StartDate,
+			EndDate:         req.EndDate,
+			Fields:          req.Fields,
+			Page:            req.Page,
+			PageSize:        req.PageSize,
+			OrderField:      req.OrderField,
+			OrderType:       req.OrderType,
+			TimeGranularity: req.TimeGranularity,
+			Filtering:       req.Filtering,
 		},
-		"session": userSession,
+	)
+	if err != nil {
+		util.ServerError(c, "获取素材报表失败: "+err.Error())
+		return
+	}
+	if resp.Code != 0 {
+		util.BadRequest(c, fmt.Sprintf("获取素材报表失败[%d]: %s", resp.Code, resp.Message))
+		return
+	}
+	util.Success(c, gin.H{
+		"list":      resp.Data.List,
+		"page_info": resp.Data.PageInfo,
 	})
 }
 
 // GetSearchWordReport 获取搜索词报表
 // POST /qianchuan/report/search-word/get
 func (h *ReportHandler) GetSearchWordReport(c *gin.Context) {
-	userSession, _ := middleware.GetUserSession(c)
-
 	var req struct {
 		StartDate string   `json:"start_date"`
 		EndDate   string   `json:"end_date"`
@@ -505,15 +558,12 @@ func (h *ReportHandler) GetSearchWordReport(c *gin.Context) {
 			"page":  req.Page,
 			"size":  req.PageSize,
 		},
-		"session": userSession,
 	})
 }
 
 // GetVideoUserLoseReport 获取视频流失报表
 // POST /qianchuan/report/video-user-lose/get
 func (h *ReportHandler) GetVideoUserLoseReport(c *gin.Context) {
-	userSession, _ := middleware.GetUserSession(c)
-
 	var req struct {
 		StartDate   string   `json:"start_date"`
 		EndDate     string   `json:"end_date"`
@@ -538,15 +588,12 @@ func (h *ReportHandler) GetVideoUserLoseReport(c *gin.Context) {
 			"page":  req.Page,
 			"size":  req.PageSize,
 		},
-		"session": userSession,
 	})
 }
 
 // GetCustomReport 获取自定义报表
 // GET /qianchuan/report/custom/get
 func (h *ReportHandler) GetCustomReport(c *gin.Context) {
-	userSession, _ := middleware.GetUserSession(c)
-
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	dimensions := c.QueryArray("dimensions")
@@ -563,7 +610,6 @@ func (h *ReportHandler) GetCustomReport(c *gin.Context) {
 			"list":  []gin.H{},
 			"total": 0,
 		},
-		"session": userSession,
 		"request": gin.H{
 			"start_date": startDate,
 			"end_date":   endDate,
@@ -575,8 +621,6 @@ func (h *ReportHandler) GetCustomReport(c *gin.Context) {
 // GetCustomReportConfig 获取自定义报表配置
 // GET /qianchuan/report/custom/config
 func (h *ReportHandler) GetCustomReportConfig(c *gin.Context) {
-	userSession, _ := middleware.GetUserSession(c)
-
 	log.Printf("Get custom report config")
 
 	// SDK 暂未实现自定义报表配置接口，返回 501
@@ -588,6 +632,5 @@ func (h *ReportHandler) GetCustomReportConfig(c *gin.Context) {
 			"dimensions": []gin.H{},
 			"metrics":    []gin.H{},
 		},
-		"session": userSession,
 	})
 }

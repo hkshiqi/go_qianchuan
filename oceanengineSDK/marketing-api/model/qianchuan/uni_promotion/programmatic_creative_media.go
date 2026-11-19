@@ -15,6 +15,8 @@ type ProgrammaticCreativeMedia struct {
 
 // VideoMaterial 视频信息
 type VideoMaterial struct {
+	// MaterialID 素材 ID
+	MaterialID uint64 `json:"material_id,omitempty"`
 	// ImageMode 素材类型，支持视频
 	// VIDEO_LARGE 横版视频
 	// VIDEO_VERTICAL 竖版视频
@@ -26,10 +28,24 @@ type VideoMaterial struct {
 	VideoCoverID string `json:"video_cover_id,omitempty"`
 	// AwemeItemID 抖音视频ID，可通过【获取抖音号下视频素材】接口获得视频id，使用抖音视频的时候默认忽略video_id
 	AwemeItemID uint64 `json:"aweme_item_id,omitempty"`
+	// VideoDuration 视频时长，单位秒
+	VideoDuration int64 `json:"video_duration,omitempty"`
+	// Title 视频标题
+	Title string `json:"title,omitempty"`
+	// Source 视频来源
+	Source string `json:"source,omitempty"`
+	// URL 视频播放地址
+	URL string `json:"url,omitempty"`
+	// CoverImage 视频封面
+	CoverImage *MaterialImage `json:"cover_image,omitempty"`
+	// StarTraffic 星图达人流量
+	StarTraffic int64 `json:"star_traffic,omitempty"`
 }
 
 // TitleMaterial 标题信息
 type TitleMaterial struct {
+	// MaterialID 素材 ID
+	MaterialID uint64 `json:"material_id,omitempty"`
 	// Title 标题
 	Title string `json:"title,omitempty"`
 }

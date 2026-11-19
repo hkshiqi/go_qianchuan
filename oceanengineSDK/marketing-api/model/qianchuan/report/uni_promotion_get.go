@@ -79,4 +79,18 @@ type UniPromotionStats struct {
 	TotalUnfinishedEstimateOrderGmvForRoi2 float64 `json:"total_unfinished_estimate_order_gmv_for_roi2,omitempty"`
 	// TotalPrepayOrderGmvForRoi2 整体预售订单成本
 	TotalPrepayOrderGmvForRoi2 float64 `json:"total_prepay_order_gmv_for_roi2,omitempty"`
+	// TotalPayOrderGmvIncludeCouponForRoi2 整体成交金额，单位元
+	TotalPayOrderGmvIncludeCouponForRoi2 float64 `json:"total_pay_order_gmv_include_coupon_for_roi2,omitempty"`
+	// TotalEcomPlatformSubsidyAmountForRoi2 电商平台补贴金额，单位元
+	TotalEcomPlatformSubsidyAmountForRoi2 float64 `json:"total_ecom_platform_subsidy_amount_for_roi2,omitempty"`
+	// TotalCostPerPayOrderSettleForRoi2_1H 净成交订单成本
+	TotalCostPerPayOrderSettleForRoi2_1H float64 `json:"total_cost_per_pay_order_settle_for_roi2_1h,omitempty"`
+	// TotalOrderSettleCountForRoi2_1H 净成交订单数
+	TotalOrderSettleCountForRoi2_1H int64 `json:"total_order_settle_count_for_roi2_1h,omitempty"`
+	// TotalOrderSettleAmountForRoi2_1H 净成交金额
+	TotalOrderSettleAmountForRoi2_1H float64 `json:"total_order_settle_amount_for_roi2_1h,omitempty"`
+	// TotalPrepayAndPaySettleRoi2_1H 净成交 ROI
+	TotalPrepayAndPaySettleRoi2_1H float64 `json:"total_prepay_and_pay_settle_roi2_1h,omitempty"`
+	// TotalOrderRealSettleAmountForRoi2_1H 用户实际支付净成交金额
+	TotalOrderRealSettleAmountForRoi2_1H float64 `json:"total_order_real_settle_amount_for_roi2_1h,omitempty"`
 }

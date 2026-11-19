@@ -19,6 +19,8 @@ type Ad struct {
 
 // AdInfo 广告信息
 type AdInfo struct {
+	// Name 投放名称
+	Name string `json:"name,omitempty"`
 	// StartTime 当前周期开始时间，用来返回周期内数据
 	StartTime string `json:"start_time,omitempty"`
 	// EndTime 当前周期结束时间
@@ -73,4 +75,10 @@ type AdDetail struct {
 	OptStatus qianchuan.AdOptStatus `json:"opt_status,omitempty"`
 	// AdID 计划id
 	AdID uint64 `json:"ad_id,omitempty"`
+	// SmartBidType 投放方式
+	SmartBidType enum.SmartBidType `json:"smart_bid_type,omitempty"`
+	// ROI2Goal 支付ROI目标
+	ROI2Goal float64 `json:"roi2_goal,omitempty"`
+	// Budget 预算
+	Budget float64 `json:"budget,omitempty"`
 }

@@ -24,7 +24,7 @@
 
 ## MCP 客户端配置
 
-可在 MCP 客户端中使用通用 stdio 配置。`MCP_API_KEY` 从服务器私有环境文件读取，禁止提交仓库或在日志中输出。
+可在 MCP 客户端中使用通用 stdio 配置。远端客户端通过 SSH 启动包装器；包装器从服务器受保护的私有环境文件读取 `MCP_API_KEY`，密钥不进入客户端参数、仓库或日志。
 
 ```json
 {
@@ -32,22 +32,19 @@
     "qianchuan": {
       "command": "ssh",
       "args": [
-        "-i",
-        "<SSH_PRIVATE_KEY>",
         "-p",
         "<SSH_PORT>",
         "<DEPLOY_USER>@<DEPLOY_HOST>",
-        "/opt/go-qianchuan/backend/bin/qianchuan-mcp"
-      ],
-      "env": {
-        "MCP_API_KEY": "<SERVER_PRIVATE_MCP_API_KEY>"
-      }
+        "/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh"
+      ]
     }
   }
 }
 ```
 
-若客户端运行在服务器本机，可直接把 `command` 指向 `/opt/go-qianchuan/backend/bin/qianchuan-mcp`，并在服务环境中配置：
+生产 SSH 需要在客户端本机 `~/.ssh/config` 中配置私钥、端口和主机别名，或通过 MCP 客户端支持的 SSH 认证方式提供私钥。
+
+包装器默认读取 `/opt/go-qianchuan/backend/.env`。若客户端运行在服务器本机，可把 `command` 直接指向 `/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh`；也可由启动环境提供：
 
 ```text
 MCP_API_KEY=<server-private-key>

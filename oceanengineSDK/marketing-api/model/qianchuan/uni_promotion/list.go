@@ -55,10 +55,18 @@ type ListFilter struct {
 func (r ListRequest) Encode() string {
 	values := util.GetUrlValues()
 	values.Set("advertiser_id", strconv.FormatUint(r.AdvertiserID, 10))
-	values.Set("start_time", r.StartTime)
-	values.Set("end_time", r.EndTime)
-	values.Set("marketing_goal", string(r.MarketingGoal))
-	values.Set("fields", string(util.JSONMarshal(r.Fields)))
+	if r.StartTime != "" {
+		values.Set("start_time", r.StartTime)
+	}
+	if r.EndTime != "" {
+		values.Set("end_time", r.EndTime)
+	}
+	if r.MarketingGoal != "" {
+		values.Set("marketing_goal", string(r.MarketingGoal))
+	}
+	if len(r.Fields) > 0 {
+		values.Set("fields", string(util.JSONMarshal(r.Fields)))
+	}
 	if r.OrderType != "" {
 		values.Set("order_type", string(r.OrderType))
 	}

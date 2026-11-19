@@ -12,8 +12,8 @@ import (
 type VideoGetRequest struct {
 	// AdvertiserID 广告主ID
 	AdvertiserID uint64 `json:"advertiser_id,omitempty"`
-	// Filtering 图片过滤条件
-	Filtering *ImageGetFilter `json:"filtering,omitempty"`
+	// Filtering 视频过滤条件
+	Filtering *VideoGetFilter `json:"filtering,omitempty"`
 	// Page 页码，默认值1
 	Page int `json:"page,omitempty"`
 	// PageSize 页面大小，默认值20
@@ -45,9 +45,9 @@ type VideoGetFilter struct {
 	// TADA tada共享素材
 	// VIDEO_CAPTURE 易拍APP共享素材
 	Sources []enum.MaterialSource `json:"sources,omitempty"`
-	// StartTime 根据图片上传时间进行过滤的起始时间，与end_time搭配使用，格式："yyyy-mm-dd"
-	StartTIme string `json:"start_time,omitempty"`
-	// EndTime 根据图片上传时间进行过滤的截止时间，与start_time搭配使用，格式："yyyy-mm-dd"
+	// StartTime 根据视频上传时间进行过滤的起始时间，与end_time搭配使用，格式："yyyy-mm-dd"
+	StartTime string `json:"start_time,omitempty"`
+	// EndTime 根据视频上传时间进行过滤的截止时间，与start_time搭配使用，格式："yyyy-mm-dd"
 	EndTime string `json:"end_time,omitempty"`
 }
 

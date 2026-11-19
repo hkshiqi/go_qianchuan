@@ -17,6 +17,9 @@ cd /opt/go-qianchuan/backend
 export PATH=/opt/toolchains/go1.24.5/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct
 go build -trimpath -o bin/qianchuan-server ./cmd/server
+go build -trimpath -o bin/qianchuan-mcp ./cmd/qianchuan-mcp
+
+install -m 0755 deploy/zjz-service/qianchuan-mcp.sh /opt/go-qianchuan/backend/bin/qianchuan-mcp.sh
 
 install -m 0644 deploy/zjz-service/qianchuan-backend.service /etc/systemd/system/qianchuan-backend.service
 install -m 0644 deploy/zjz-service/go-qianchuan.conf /www/server/panel/vhost/nginx/go-qianchuan.conf
@@ -25,6 +28,16 @@ systemctl enable --now qianchuan-backend.service
 nginx -t
 nginx -s reload
 ```
+
+## MCP 客户端
+
+远端 MCP 客户端通过 SSH 执行：
+
+```text
+/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh
+```
+
+包装器从 `/opt/go-qianchuan/backend/.env` 读取 `MCP_API_KEY`，以标准输入输出运行 `qianchuan-mcp`。密钥不会出现在 SSH 参数、客户端配置或服务日志中。
 
 ## 回滚到旧工作台
 

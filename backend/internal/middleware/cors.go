@@ -25,7 +25,7 @@ func CORS() gin.HandlerFunc {
 		config := cors.Config{
 			AllowAllOrigins:  true,
 			AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-CSRF-Token"},
+			AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-CSRF-Token", "X-MCP-Key"},
 			ExposeHeaders:    []string{"Content-Length"},
 			AllowCredentials: false, // AllowAllOrigins 与 AllowCredentials 不兼容
 			MaxAge:           12 * time.Hour,
@@ -43,7 +43,7 @@ func CORS() gin.HandlerFunc {
 	config := cors.Config{
 		AllowOrigins:     allowOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-CSRF-Token"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-CSRF-Token", "X-MCP-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
