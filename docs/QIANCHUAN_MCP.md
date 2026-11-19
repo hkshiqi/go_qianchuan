@@ -6,7 +6,7 @@
 
 - 工作台：<https://dkl4ii67.zjz-service.cn/>
 - 健康检查：<https://dkl4ii67.zjz-service.cn/health>
-- 服务端工具 API：`https://dkl4ii67.zjz-service.cn/api/mcp`
+- 服务端 MCP：`https://dkl4ii67.zjz-service.cn/mcp`
 - 标准 MCP stdio：服务器 `/opt/go-qianchuan/backend/bin/qianchuan-mcp`
 
 ## 只读工具
@@ -16,7 +16,7 @@
 | `qianchuan_get_status` | 账户上下文与读写开关 |
 | `qianchuan_list_plans` | 计划列表、消耗与成交 |
 | `qianchuan_get_plan` | 单计划详情 |
-| `qianchuan_list_plan_materials` | 素材指标与当日消耗前三保护名单 |
+| `qianchuan_get_plan_materials` | 素材指标与当日消耗前三保护名单 |
 | `qianchuan_material_report` | 素材报表、点击率、转化率与 GPM |
 | `qianchuan_live_overview` | 当日直播间投放概览 |
 
@@ -24,32 +24,34 @@
 
 ## MCP 客户端配置
 
-可在 MCP 客户端中使用通用 stdio 配置。远端客户端通过 SSH 启动包装器；包装器从服务器受保护的私有环境文件读取 `MCP_API_KEY`，密钥不进入客户端参数、仓库或日志。
+所有使用人共用同一个公网地址，但各自在自己的 MCP 客户端配置中保存独立 Bearer Key。服务端只根据 `Authorization: Bearer <key>` 解析调用人，租户和广告主不能由工具参数指定。
+
+优先使用远程 HTTP MCP：
+
+```text
+URL: https://dkl4ii67.zjz-service.cn/mcp
+Header: Authorization: Bearer <调用人自己的租户 Key>
+```
+
+不同 MCP 客户端填写请求头的字段名不同；只要该客户端支持远程 HTTP MCP，就填写上述 URL 和 Authorization 请求头。Key 必须保存在调用人自己的客户端 Secret/环境变量中，不能写入共享配置文件、共享服务器目录或 MCP 工具参数。
+
+仅当客户端不支持远程 HTTP MCP 时，才在本机运行 stdio 代理：
 
 ```json
 {
   "mcpServers": {
     "qianchuan": {
-      "command": "ssh",
-      "args": [
-        "-p",
-        "<SSH_PORT>",
-        "<DEPLOY_USER>@<DEPLOY_HOST>",
-        "/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh"
-      ]
+      "command": "<本机 qianchuan-mcp 路径>",
+      "env": {
+        "QIANCHUAN_TENANT_KEY": "<调用人自己的租户 Key>",
+        "QIANCHUAN_MCP_BASE_URL": "https://dkl4ii67.zjz-service.cn/mcp"
+      }
     }
   }
 }
 ```
 
-生产 SSH 需要在客户端本机 `~/.ssh/config` 中配置私钥、端口和主机别名，或通过 MCP 客户端支持的 SSH 认证方式提供私钥。
-
-包装器默认读取 `/opt/go-qianchuan/backend/.env`。若客户端运行在服务器本机，可把 `command` 直接指向 `/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh`；也可由启动环境提供：
-
-```text
-MCP_API_KEY=<server-private-key>
-QIANCHUAN_MCP_BASE_URL=http://127.0.0.1:18081/api/mcp
-```
+包装器不再接受 `TENANT_ID` 参数，也不会从服务器共享目录按租户名读取 Key。每个使用人只在自己的进程中提供 `QIANCHUAN_TENANT_KEY`，知道别人的租户 ID 或广告主 ID 不能切换账户。
 
 ## 授权
 

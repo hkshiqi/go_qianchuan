@@ -1,29 +1,11 @@
 #!/bin/sh
 set -eu
 
-ENV_FILE="${QIANCHUAN_MCP_ENV_FILE:-/opt/go-qianchuan/backend/.env}"
 MCP_BIN="${QIANCHUAN_MCP_BIN:-/opt/go-qianchuan/backend/bin/qianchuan-mcp}"
 
-env_value() {
-	key="$1"
-	awk -v key="$key" '
-		$0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-			value = $0
-			sub(/^[^=]*=/, "", value)
-			sub(/\r$/, "", value)
-			sub(/[[:space:]]+$/, "", value)
-			if (value ~ /^".*"$/ || value ~ /^'\''.*'\''$/) {
-				value = substr(value, 2, length(value) - 2)
-			}
-			print value
-			exit
-		}
-	' "$ENV_FILE"
-}
-
-if [ ! -r "$ENV_FILE" ]; then
-	echo "qianchuan-mcp: environment file is not readable: $ENV_FILE" >&2
-	exit 1
+if [ "$#" -ne 0 ]; then
+	echo "qianchuan-mcp: tenant arguments are not accepted; provide the caller's key through QIANCHUAN_TENANT_KEY" >&2
+	exit 2
 fi
 
 if [ ! -x "$MCP_BIN" ]; then
@@ -31,18 +13,15 @@ if [ ! -x "$MCP_BIN" ]; then
 	exit 1
 fi
 
-api_key="$(env_value MCP_API_KEY)"
+api_key="${QIANCHUAN_TENANT_KEY:-}"
 if [ -z "$api_key" ]; then
-	echo "qianchuan-mcp: MCP_API_KEY is missing from $ENV_FILE" >&2
+	echo "qianchuan-mcp: QIANCHUAN_TENANT_KEY is required in the caller environment" >&2
 	exit 1
 fi
 
-base_url="$(env_value QIANCHUAN_MCP_BASE_URL)"
-if [ -z "$base_url" ]; then
-	base_url="http://127.0.0.1:18081/api/mcp"
-fi
+base_url="${QIANCHUAN_MCP_BASE_URL:-http://127.0.0.1:18081/mcp}"
 
 exec env \
-	MCP_API_KEY="$api_key" \
+	QIANCHUAN_TENANT_KEY="$api_key" \
 	QIANCHUAN_MCP_BASE_URL="$base_url" \
 	"$MCP_BIN"

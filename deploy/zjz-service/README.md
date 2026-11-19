@@ -5,6 +5,8 @@
 - 公网：`https://dkl4ii67.zjz-service.cn/`
 - Nginx：监听宿主机 `8080`，静态站点为 `/opt/go-qianchuan/frontend/dist`
 - Go 后端：systemd `qianchuan-backend.service`，监听 `127.0.0.1:18081`
+- MCP 公网入口：`https://dkl4ii67.zjz-service.cn/mcp`
+- MCP 租户隔离：每个使用人一把独立 Bearer Key，绑定唯一的广告主、抖音号和直播间
 - 访问控制：`/access` 页面使用 `APP_ACCESS_USERNAME` 和 `APP_ACCESS_PASSWORD_SHA256`，Session 保存在服务端内存
 - OAuth 回调需要跨站携带访问 Session，因此生产环境使用 `COOKIE_SECURE=true`、`COOKIE_SAME_SITE=none`
 - Nginx 将 `/api/`、`/health`、`/ready`、`/metrics` 和 `/swagger/` 转发到 Go 后端
@@ -18,6 +20,7 @@ export PATH=/opt/toolchains/go1.24.5/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct
 go build -trimpath -o bin/qianchuan-server ./cmd/server
 go build -trimpath -o bin/qianchuan-mcp ./cmd/qianchuan-mcp
+go build -trimpath -o bin/qianchuan-tenant ./cmd/qianchuan-tenant
 
 install -m 0755 deploy/zjz-service/qianchuan-mcp.sh /opt/go-qianchuan/backend/bin/qianchuan-mcp.sh
 
@@ -29,15 +32,32 @@ nginx -t
 nginx -s reload
 ```
 
-## MCP 客户端
+## 创建 MCP 租户
 
-远端 MCP 客户端通过 SSH 执行：
-
-```text
-/opt/go-qianchuan/backend/bin/qianchuan-mcp.sh
+```bash
+install -d -m 0700 /opt/go-qianchuan/tenants
+/opt/go-qianchuan/backend/bin/qianchuan-tenant create \
+  --id owner \
+  --name "运营A" \
+  --advertiser-id 1855810750424170 \
+  --aweme-id 63307887035 \
+  --live-room-id 7709635958206991154 \
+  --key-file /opt/go-qianchuan/tenants/owner.key
+chmod 600 /opt/go-qianchuan/tenants/owner.key
 ```
 
-包装器从 `/opt/go-qianchuan/backend/.env` 读取 `MCP_API_KEY`，以标准输入输出运行 `qianchuan-mcp`。密钥不会出现在 SSH 参数、客户端配置或服务日志中。
+广告主只能绑定一个租户；同一广告主的管理员需要共用同一个租户 Key。不同用户管理不同广告主时，分别创建租户，不能通过 MCP 参数切换 `advertiser_id`。
+
+## MCP 客户端
+
+所有使用人共用 `https://dkl4ii67.zjz-service.cn/mcp`，但分别持有自己的 Bearer Key。Key 只配置在各调用人的 MCP 客户端 Secret 或本机环境中，不能放进共享目录或工具参数。
+
+```text
+URL: https://dkl4ii67.zjz-service.cn/mcp
+Header: Authorization: Bearer <调用人自己的租户 Key>
+```
+
+仅当客户端不支持远程 HTTP MCP 时，才在本机运行 stdio 代理，并通过本机环境提供 `QIANCHUAN_TENANT_KEY` 和 `QIANCHUAN_MCP_BASE_URL`。`qianchuan-mcp.sh` 不接受租户参数，也不会按租户名读取服务器共享 Key 文件，避免共用 SSH 账户的人切换账户。
 
 ## 回滚到旧工作台
 

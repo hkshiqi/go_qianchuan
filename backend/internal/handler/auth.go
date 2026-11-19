@@ -188,9 +188,11 @@ func (h *AuthHandler) GetUserInfo(c *gin.Context) {
 		log.Printf("[GetUserInfo] get user info failed; returning basic info: %v", err)
 		// 如果失败，返回基本信息
 		util.Success(c, gin.H{
-			"id":    userSession.AdvertiserID,
-			"name":  "广告主",
-			"email": "",
+			"id":            userSession.AdvertiserID,
+			"advertiserId":  userSession.AdvertiserID,
+			"advertiser_id": userSession.AdvertiserID,
+			"name":          "广告主",
+			"email":         "",
 		})
 		return
 	}
@@ -198,9 +200,11 @@ func (h *AuthHandler) GetUserInfo(c *gin.Context) {
 	log.Printf("[GetUserInfo] got user info from API")
 	// 返回真实用户信息
 	util.Success(c, gin.H{
-		"id":    userInfoResp.Data.Id,
-		"name":  userInfoResp.Data.DisplayName,
-		"email": userInfoResp.Data.Email,
+		"id":            userInfoResp.Data.Id,
+		"advertiserId":  userSession.AdvertiserID,
+		"advertiser_id": userSession.AdvertiserID,
+		"name":          userInfoResp.Data.DisplayName,
+		"email":         userInfoResp.Data.Email,
 	})
 }
 

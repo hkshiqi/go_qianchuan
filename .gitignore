@@ -28,42 +28,11 @@ yarn-error.log*
 backups/
 *.bundle
 
-# Build artifacts (子目录有自己的gitignore)
-dist/
-build/
-
-# Node modules (子目录有自己的gitignore)
-node_modules/
-
-# Go binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin/
-/server
-/main
-
-# Test coverage
-coverage/
-*.out
-
-# Docker
-docker-compose.override.yml
-
-# Project specific
-PROJECT_ANALYSIS_*.md
-TODO.md
-NOTES.md
 # Claude Code configuration files
 .claude/mcp-servers.json
 .claude/settings.json
 .claude/settings.local.json
 .claude/hooks/
-
-# Node.js (if using npx MCP servers)
-node_modules/
 
 # Python (if using analyzer)
 __pycache__/
@@ -88,25 +57,13 @@ wheels/
 *.egg
 PYTHON_ARGCOMPLETE_OK
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
 # Warp configuration (may contain sensitive tokens)
 .warp/
 
 # Teams directory - MCP configurations with secrets
 Teams/mcp-servers-config.local.json
 Teams/*.local.json
+# Local build outputs and runtime credentials
+backend/dist-mcp/
+*.key
+tokens.json

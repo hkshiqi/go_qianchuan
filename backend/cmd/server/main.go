@@ -14,13 +14,16 @@ import (
 	"time"
 
 	"github.com/CriarBrand/qianchuan-backend/docs"
+	"github.com/CriarBrand/qianchuan-backend/internal/authstate"
 	"github.com/CriarBrand/qianchuan-backend/internal/handler"
+	"github.com/CriarBrand/qianchuan-backend/internal/mcp"
 	"github.com/CriarBrand/qianchuan-backend/internal/middleware"
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
 	"github.com/CriarBrand/qianchuan-backend/internal/tokenmanager"
 	"github.com/CriarBrand/qianchuan-backend/internal/util"
 	"github.com/CriarBrand/qianchuan-backend/pkg/tokenstore"
+	"github.com/CriarBrand/qianchuan-backend/pkg/tenantstore"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/memstore"
 	"github.com/gin-gonic/gin"
@@ -78,7 +81,9 @@ func main() {
 func buildRouter(appID int64, appSecret string) *gin.Engine {
 	client := sdk.NewOceanengineClient(appID, appSecret)
 	qianchuanService := service.NewQianchuanService(client, appID, appSecret)
-	tokenStore, err := tokenstore.New(envString("TOKEN_STORE_PATH", "data/tokens.json"), envString("TOKEN_ENCRYPTION_KEY", ""))
+	tokenStorePath := envString("TOKEN_STORE_PATH", "data/tokens.json")
+	tokenEncryptionKey := envString("TOKEN_ENCRYPTION_KEY", "")
+	tokenStore, err := tokenstore.New(tokenStorePath, tokenEncryptionKey)
 	if err != nil {
 		log.Fatalf("initialize token store: %v", err)
 	}
@@ -91,6 +96,28 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	qianchuanService.DefaultAwemeID = envInt64("QIANCHUAN_DEFAULT_AWEME_ID", 0)
 	qianchuanService.DefaultLiveRoomID = envInt64("QIANCHUAN_DEFAULT_LIVE_ROOM_ID", 0)
 	operationsWriteEnabled := envBool("OPERATIONS_WRITE_ENABLED", false)
+	tenants, err := tenantstore.New(
+		envString("TENANT_STORE_PATH", "data/tenants.json"),
+		envString("TENANT_ENCRYPTION_KEY", ""),
+	)
+	if err != nil {
+		log.Fatalf("initialize tenant store: %v", err)
+	}
+	authStates := authstate.New(10 * time.Minute)
+	oauthAuthorizationURL := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn") + "/oauth/authorize"
+	tenantFactory, err := mcp.NewTenantFactory(mcp.TenantFactoryOptions{
+		Client:                client,
+		AppID:                 appID,
+		AppSecret:             appSecret,
+		TokenRoot:             mcp.TenantTokenRoot(tokenStorePath),
+		TokenEncryptionKey:    tokenEncryptionKey,
+		WriteEnabled:          operationsWriteEnabled,
+		OAuthAuthorizationURL: oauthAuthorizationURL,
+		IssueAuthState:        authStates.Issue,
+	})
+	if err != nil {
+		log.Fatalf("initialize tenant runtime factory: %v", err)
+	}
 
 	authHandler := handler.NewAuthHandler(qianchuanService)
 	accessHandler := handler.NewAccessHandler()
@@ -108,7 +135,15 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	uniPromotionHandler := handler.NewUniPromotionHandler(qianchuanService)
 	activityHandler := handler.NewActivityHandler()
 	webhookHandler := handler.NewWebhookHandler()
-	mcpHandler := handler.NewMCPHandler(qianchuanService, envString("MCP_API_KEY", ""), operationsWriteEnabled)
+	oauthHandler := handler.NewOAuthHandler(
+		client,
+		appID,
+		envString("OAUTH_REDIRECT_URI", "https://dkl4ii67.zjz-service.cn/auth/callback"),
+		tenants,
+		authStates,
+		tenantFactory,
+	)
+	mcpServer := mcp.NewServer(tenants, tenantFactory)
 
 	router := gin.New()
 	router.Use(gin.Recovery(), middleware.Trace(), middleware.Logger(), middleware.Metrics())
@@ -128,7 +163,14 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	router.GET("/healthz", middleware.HealthCheckHandler)
 	router.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
 	router.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-sdk-platform"})
+		c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-live-operations-mcp"})
+	})
+	router.GET("/oauth/authorize", oauthHandler.AuthorizationURL)
+	router.GET("/auth/callback", oauthHandler.Callback)
+	router.POST("/mcp", gin.WrapH(mcpServer))
+	router.OPTIONS("/mcp", func(c *gin.Context) {
+		c.Header("Allow", "POST, OPTIONS")
+		c.Status(http.StatusNoContent)
 	})
 	router.GET("/metrics", middleware.ExportMetricsHandler)
 	router.Any("/webhook/callback", func(c *gin.Context) {
@@ -146,9 +188,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	api.GET("/access/status", accessHandler.Status)
 	api.POST("/access/login", accessHandler.Login)
 	api.POST("/access/logout", accessHandler.Logout)
-	api.POST("/oauth/exchange", authHandler.OAuthExchange)
 	api.POST("/auth/refresh", middleware.AccessRequired(), authHandler.RefreshSession)
-	registerMCPRoutes(api, mcpHandler)
 
 	protected := api.Group("")
 	protected.Use(middleware.AccessRequired(), middleware.AuthRequired(), middleware.AutoRefreshToken(qianchuanService), middleware.CSRFProtection())
@@ -290,28 +330,6 @@ func registerUniPromotionRoutes(group *gin.RouterGroup, h *handler.UniPromotionH
 	group.POST("/qianchuan/uni-promotion/material/add-existing", h.AddExistingMaterial)
 	group.GET("/qianchuan/uni-promotion/aweme/authorized", h.GetBudgetSchedule)
 	group.POST("/qianchuan/uni-promotion/auth-init", h.UpdateAuth)
-}
-
-func registerMCPRoutes(group *gin.RouterGroup, h *handler.MCPHandler) {
-	mcp := group.Group("/mcp")
-	mcp.Use(h.RequireAPIKey)
-	mcp.GET("/status", h.Status)
-	mcp.GET("/plans", h.Plans)
-	mcp.GET("/plans/:ad_id", h.PlanDetail)
-	mcp.GET("/plans/:ad_id/materials", h.PlanMaterials)
-	mcp.POST("/material-report", h.MaterialReport)
-	mcp.GET("/live-overview", h.LiveOverview)
-
-	for _, route := range []string{
-		"/plans/create",
-		"/plans/:ad_id/budget",
-		"/plans/:ad_id/roi",
-		"/plans/:ad_id/pause",
-		"/plans/:ad_id/materials/remove",
-		"/plans/:ad_id/materials/add-existing",
-	} {
-		mcp.POST(route, h.WriteDisabled)
-	}
 }
 
 var operationReadOnlyPOSTPaths = []string{
