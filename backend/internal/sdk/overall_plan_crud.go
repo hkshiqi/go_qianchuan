@@ -3,12 +3,17 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
+
+const OverallProductPlanMinimumBudget = 300.0
 
 type OverallAwemeListReq struct {
 	AccessToken  string
@@ -147,6 +152,9 @@ func (c *OceanengineClient) OverallProductPlanCreate(
 	ctx context.Context,
 	req OverallProductPlanCreateReq,
 ) (*OverallProductPlanCreateRes, error) {
+	if err := validateOverallProductPlanCreateReq(req); err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"advertiser_id":  req.AdvertiserId,
 		"name":           req.Name,
@@ -184,6 +192,54 @@ func (c *OceanengineClient) OverallProductPlanCreate(
 		return nil, err
 	}
 	return &result, nil
+}
+
+func validateOverallProductPlanCreateReq(req OverallProductPlanCreateReq) error {
+	if strings.TrimSpace(req.AccessToken) == "" {
+		return errors.New("overall product plan access token is required")
+	}
+	if req.AdvertiserId == 0 {
+		return errors.New("overall product plan advertiser_id is required")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return errors.New("overall product plan name is required")
+	}
+	if req.ProductId == 0 {
+		return errors.New("overall product plan product_id is required")
+	}
+	if req.AwemeId == 0 {
+		return errors.New("overall product plan aweme_id is required")
+	}
+	if req.Budget < OverallProductPlanMinimumBudget {
+		return fmt.Errorf(
+			"overall product plan budget must be at least %.0f CNY",
+			OverallProductPlanMinimumBudget,
+		)
+	}
+	if req.Roi2Goal <= 0 || req.Roi2Goal > 100 {
+		return errors.New("overall product plan roi2_goal must be greater than 0 and at most 100")
+	}
+	startDate, err := time.ParseInLocation("2006-01-02", req.StartDate, shanghaiTimezone())
+	if err != nil {
+		return errors.New("overall product plan start_date must use YYYY-MM-DD")
+	}
+	endDate, err := time.ParseInLocation("2006-01-02", req.EndDate, shanghaiTimezone())
+	if err != nil {
+		return errors.New("overall product plan end_date must use YYYY-MM-DD")
+	}
+	now := time.Now().In(shanghaiTimezone())
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, shanghaiTimezone())
+	if !startDate.After(today) {
+		return errors.New("overall product plan start_date must be tomorrow or later")
+	}
+	if endDate.Before(startDate) {
+		return errors.New("overall product plan end_date cannot be earlier than start_date")
+	}
+	return nil
+}
+
+func shanghaiTimezone() *time.Location {
+	return time.FixedZone("Asia/Shanghai", 8*60*60)
 }
 
 func (c *OceanengineClient) OverallProductPlanNameUpdate(

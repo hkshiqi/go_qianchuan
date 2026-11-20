@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestDecodeUniPromotionDetailAcceptsObjectCreativeMedia(t *testing.T) {
@@ -82,5 +83,57 @@ func TestAdlabSceneAcceptsDetailNumberAndListString(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("adlab_scene %s = %q, want %q", test.raw, got, test.want)
 		}
+	}
+}
+
+func TestValidateOverallProductPlanCreateReq(t *testing.T) {
+	tomorrow := time.Now().In(shanghaiTimezone()).AddDate(0, 0, 1).Format("2006-01-02")
+	valid := OverallProductPlanCreateReq{
+		AccessToken:  "redacted",
+		AdvertiserId: 1855810750424170,
+		Name:         "overall-plan",
+		ProductId:    3828195166146134185,
+		AwemeId:      2362231432675704,
+		Budget:       OverallProductPlanMinimumBudget,
+		Roi2Goal:     1.90,
+		StartDate:    tomorrow,
+		EndDate:      tomorrow,
+	}
+	if err := validateOverallProductPlanCreateReq(valid); err != nil {
+		t.Fatalf("valid request was rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*OverallProductPlanCreateReq)
+	}{
+		{name: "missing token", mutate: func(req *OverallProductPlanCreateReq) { req.AccessToken = "" }},
+		{name: "missing advertiser", mutate: func(req *OverallProductPlanCreateReq) { req.AdvertiserId = 0 }},
+		{name: "missing name", mutate: func(req *OverallProductPlanCreateReq) { req.Name = "" }},
+		{name: "missing product", mutate: func(req *OverallProductPlanCreateReq) { req.ProductId = 0 }},
+		{name: "missing aweme", mutate: func(req *OverallProductPlanCreateReq) { req.AwemeId = 0 }},
+		{name: "budget below minimum", mutate: func(req *OverallProductPlanCreateReq) { req.Budget = 299.99 }},
+		{name: "roi zero", mutate: func(req *OverallProductPlanCreateReq) { req.Roi2Goal = 0 }},
+		{name: "roi above maximum", mutate: func(req *OverallProductPlanCreateReq) { req.Roi2Goal = 100.01 }},
+		{name: "start today", mutate: func(req *OverallProductPlanCreateReq) {
+			req.StartDate = time.Now().In(shanghaiTimezone()).Format("2006-01-02")
+			req.EndDate = req.StartDate
+		}},
+		{name: "end before start", mutate: func(req *OverallProductPlanCreateReq) {
+			req.EndDate = time.Now().In(shanghaiTimezone()).AddDate(0, 0, 1).Format("2006-01-02")
+			req.StartDate = time.Now().In(shanghaiTimezone()).AddDate(0, 0, 2).Format("2006-01-02")
+		}},
+		{name: "invalid start format", mutate: func(req *OverallProductPlanCreateReq) {
+			req.StartDate = "11/21/2026"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.mutate(&req)
+			if err := validateOverallProductPlanCreateReq(req); err == nil {
+				t.Fatal("invalid request was accepted")
+			}
+		})
 	}
 }

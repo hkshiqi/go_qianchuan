@@ -1542,7 +1542,7 @@ func (t *Tools) createTestOverallProductPlan(ctx context.Context, args map[strin
 		return nil, err
 	}
 	budget, ok := floatArg(args, "budget")
-	if !ok || !almostEqual(budget, 300, 0.000001) {
+	if !ok || !almostEqual(budget, sdk.OverallProductPlanMinimumBudget, 0.000001) {
 		return nil, errors.New("budget must equal 300 CNY because overall product plans enforce a 300 CNY minimum")
 	}
 	roi2Goal, err := overallPlanCRUDTestROIGoal(args)

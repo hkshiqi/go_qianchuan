@@ -118,11 +118,11 @@ func TestOverallPlanCRUDTestROIGoalDefaultsAndValidates(t *testing.T) {
 }
 
 func TestOverallPlanCRUDBudgetHonorsPlatformMinimum(t *testing.T) {
-	if !almostEqual(300, 300, 0.000001) {
+	if !almostEqual(300, sdk.OverallProductPlanMinimumBudget, 0.000001) {
 		t.Fatal("the official overall-plan minimum budget was not accepted")
 	}
 	for _, value := range []float64{0, 0.01, 299.99, 300.01} {
-		if almostEqual(value, 300, 0.000001) {
+		if almostEqual(value, sdk.OverallProductPlanMinimumBudget, 0.000001) {
 			t.Fatalf("non-minimum test budget accepted: %v", value)
 		}
 	}
