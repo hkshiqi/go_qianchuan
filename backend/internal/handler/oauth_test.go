@@ -23,6 +23,8 @@ type oauthTestClient struct {
 	advertiserIDs []int64
 	roots         []sdk.AdvertiserListItem
 	workspaceIDs  []int64
+	workspaceCode int64
+	workspaceErr  error
 }
 
 func (c oauthTestClient) OauthAccessToken(context.Context, sdk.OauthAccessTokenReq) (*sdk.OauthAccessTokenRes, error) {
@@ -49,7 +51,14 @@ func (c oauthTestClient) AdvertiserList(context.Context, sdk.AdvertiserListReq) 
 }
 
 func (c oauthTestClient) CustomerCenterAdvertiserList(context.Context, sdk.CustomerCenterAdvertiserListReq) (*sdk.CustomerCenterAdvertiserListRes, error) {
-	response := &sdk.CustomerCenterAdvertiserListRes{Code: 0, Message: "success"}
+	if c.workspaceErr != nil {
+		return nil, c.workspaceErr
+	}
+	response := &sdk.CustomerCenterAdvertiserListRes{Code: c.workspaceCode, Message: "test"}
+	if response.Code != 0 {
+		return response, nil
+	}
+	response.Message = "success"
 	for _, id := range c.workspaceIDs {
 		response.Data.List = append(response.Data.List, sdk.CustomerCenterAdvertiserItem{AdvertiserId: id})
 	}
@@ -135,6 +144,44 @@ func TestOAuthCallbackResolvesWorkspaceRootToBoundAdvertiser(t *testing.T) {
 	}
 	if bytesContains(raw, []byte(`"9999"`)) {
 		t.Fatal("workspace advertiser outside tenant binding was persisted")
+	}
+}
+
+func TestOAuthCallbackPersistsSelectedAccountWhenWorkspaceListFails(t *testing.T) {
+	handler, factory, tenant := buildOAuthTestHandler(t, oauthTestClient{
+		advertiserID: 9001,
+		roots: []sdk.AdvertiserListItem{{
+			AdvertiserId: 9001,
+			AccountRole:  "CUSTOMER_ADMIN",
+		}},
+		workspaceCode: 50000,
+	})
+	state, err := handler.states.IssueForAccount(tenant.ID, 1002)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/auth/callback?state="+state+"&auth_code=test-code", nil)
+	handler.Callback(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	caller, err := factory.ToolsFor(context, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := caller.Call(context, "qianchuan_get_status", map[string]any{"account_id": "1002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, ok := value.(mcp.Status)
+	if !ok {
+		t.Fatalf("status type = %T", value)
+	}
+	if !status.Authenticated || !status.TokenStorePresent {
+		t.Fatalf("selected account was not persisted: %#v", status)
 	}
 }
 

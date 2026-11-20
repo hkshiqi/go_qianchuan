@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"log"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,7 +14,7 @@ func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
+		query := redactedQuery(c.Request.URL.RawQuery)
 
 		c.Next()
 
@@ -34,4 +36,23 @@ func Logger() gin.HandlerFunc {
 			path,
 		)
 	}
+}
+
+// redactedQuery removes OAuth and API credentials from access logs while
+// preserving non-sensitive query parameters for troubleshooting.
+func redactedQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "<redacted>"
+	}
+	for key := range values {
+		switch strings.ToLower(key) {
+		case "auth_code", "code", "access_token", "refresh_token", "token", "secret":
+			values[key] = []string{"REDACTED"}
+		}
+	}
+	return values.Encode()
 }

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-contrib/sessions"
@@ -50,6 +51,25 @@ func TestLogger(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestRedactedQueryRemovesCredentials(t *testing.T) {
+	raw := "app_id=123&auth_code=sensitive-code&code=second-code&access_token=access&refresh_token=refresh&state=non-secret"
+	got := redactedQuery(raw)
+	for _, secret := range []string{"sensitive-code", "second-code", "=access&", "=refresh&"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted query still contains %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "app_id=123") || !strings.Contains(got, "state=non-secret") {
+		t.Fatalf("redacted query dropped non-sensitive data: %s", got)
+	}
+}
+
+func TestRedactedQueryFailsClosedWhenMalformed(t *testing.T) {
+	if got := redactedQuery("auth_code=%zz"); got != "<redacted>" {
+		t.Fatalf("malformed query = %q, want <redacted>", got)
 	}
 }
 

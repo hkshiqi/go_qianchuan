@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -117,7 +118,16 @@ func (f *TenantFactory) SaveOAuthSession(
 			accountID,
 		)
 		if err != nil {
-			return err
+			fallbackAccounts := explicitOAuthAccounts(tenant.AccountList(), accountID)
+			if len(fallbackAccounts) == 0 {
+				return err
+			}
+			log.Printf(
+				"MCP OAuth account discovery warning: %v; persisting explicitly bound advertiser %d",
+				err,
+				fallbackAccounts[0],
+			)
+			matchedAccounts = fallbackAccounts
 		}
 	}
 	if len(matchedAccounts) == 0 {
@@ -137,6 +147,24 @@ func (f *TenantFactory) SaveOAuthSession(
 		if err := runtime.service.TokenManager.SaveToken(advertiserID, value); err != nil {
 			return fmt.Errorf("persist tenant OAuth session for %d: %w", advertiserID, err)
 		}
+	}
+	return nil
+}
+
+// explicitOAuthAccounts limits degraded discovery to an account explicitly
+// selected by state, or the tenant's sole bound account. Ambiguous
+// multi-account tenants still fail closed when discovery is unavailable.
+func explicitOAuthAccounts(accounts []tenantstore.AccountBinding, accountID int64) []int64 {
+	if accountID > 0 {
+		for _, account := range accounts {
+			if account.AdvertiserID == accountID {
+				return []int64{accountID}
+			}
+		}
+		return nil
+	}
+	if len(accounts) == 1 {
+		return []int64{accounts[0].AdvertiserID}
 	}
 	return nil
 }

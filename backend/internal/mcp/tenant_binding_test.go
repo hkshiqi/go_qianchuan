@@ -13,13 +13,14 @@ import (
 
 type tenantFactoryTestClient struct {
 	sdk.QianchuanClient
-	roots           []sdk.AdvertiserListItem
-	workspaceIDs    []int64
-	shopIDs         []int64
-	agentIDs        []int64
-	rootListCode    int64
-	rootListErr     error
-	customerListErr error
+	roots            []sdk.AdvertiserListItem
+	workspaceIDs     []int64
+	shopIDs          []int64
+	agentIDs         []int64
+	rootListCode     int64
+	rootListErr      error
+	customerListCode int64
+	customerListErr  error
 }
 
 func (c tenantFactoryTestClient) AdvertiserList(context.Context, sdk.AdvertiserListReq) (*sdk.AdvertiserListRes, error) {
@@ -37,7 +38,11 @@ func (c tenantFactoryTestClient) CustomerCenterAdvertiserList(context.Context, s
 	if c.customerListErr != nil {
 		return nil, c.customerListErr
 	}
-	response := &sdk.CustomerCenterAdvertiserListRes{Code: 0, Message: "success"}
+	response := &sdk.CustomerCenterAdvertiserListRes{Code: c.customerListCode, Message: "test"}
+	if response.Code != 0 {
+		return response, nil
+	}
+	response.Message = "success"
 	for _, id := range c.workspaceIDs {
 		response.Data.List = append(response.Data.List, sdk.CustomerCenterAdvertiserItem{AdvertiserId: id})
 	}
@@ -420,5 +425,99 @@ func TestWorkspaceWithoutBoundAdvertiserIsRejected(t *testing.T) {
 	}, 0)
 	if !errors.Is(err, ErrTenantAccountMismatch) {
 		t.Fatalf("SaveOAuthSession error = %v, want ErrTenantAccountMismatch", err)
+	}
+}
+
+func TestWorkspaceListFailureFallsBackOnlyToSelectedAccount(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewTenantFactory(TenantFactoryOptions{
+		Client: tenantFactoryTestClient{
+			roots: []sdk.AdvertiserListItem{{
+				AdvertiserId: 9001,
+				AccountRole:  "CUSTOMER_ADMIN",
+			}},
+			customerListCode: 50000,
+		},
+		AppID:              123,
+		AppSecret:          "test-secret",
+		TokenRoot:          filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState: func(string) (string, error) {
+			return "state", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := tenantstore.Tenant{
+		ID:           "owner",
+		Name:         "owner",
+		AdvertiserID: 1001,
+		Accounts: []tenantstore.AccountBinding{
+			{AdvertiserID: 1001},
+			{AdvertiserID: 1002},
+		},
+	}
+	if err := factory.SaveOAuthSession(context.Background(), tenant, &sdk.OauthAccessTokenResData{
+		AccessToken:           "access-token",
+		RefreshToken:          "refresh-token",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 3600,
+		AdvertiserId:          9001,
+	}, 1002); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := factory.ToolsFor(context.Background(), &tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := caller.(*Tools)
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1001); err == nil {
+		t.Fatal("unselected account was persisted during degraded discovery")
+	}
+	if _, err := tools.service.TokenManager.AccessToken(context.Background(), 1002); err != nil {
+		t.Fatalf("selected account was not persisted: %v", err)
+	}
+}
+
+func TestWorkspaceListFailureRejectsAmbiguousMultiAccountTenant(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewTenantFactory(TenantFactoryOptions{
+		Client: tenantFactoryTestClient{
+			roots: []sdk.AdvertiserListItem{{
+				AdvertiserId: 9001,
+				AccountRole:  "CUSTOMER_ADMIN",
+			}},
+			customerListCode: 50000,
+		},
+		AppID:              123,
+		AppSecret:          "test-secret",
+		TokenRoot:          filepath.Join(dataDir, "tokens"),
+		TokenEncryptionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+		IssueAuthState: func(string) (string, error) {
+			return "state", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := tenantstore.Tenant{
+		ID:           "owner",
+		Name:         "owner",
+		AdvertiserID: 1001,
+		Accounts: []tenantstore.AccountBinding{
+			{AdvertiserID: 1001},
+			{AdvertiserID: 1002},
+		},
+	}
+	err = factory.SaveOAuthSession(context.Background(), tenant, &sdk.OauthAccessTokenResData{
+		AccessToken:           "access-token",
+		RefreshToken:          "refresh-token",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 3600,
+		AdvertiserId:          9001,
+	}, 0)
+	if err == nil {
+		t.Fatal("ambiguous multi-account tenant was accepted after discovery failed")
 	}
 }
