@@ -22,8 +22,8 @@ import (
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
 	"github.com/CriarBrand/qianchuan-backend/internal/tokenmanager"
 	"github.com/CriarBrand/qianchuan-backend/internal/util"
-	"github.com/CriarBrand/qianchuan-backend/pkg/tokenstore"
 	"github.com/CriarBrand/qianchuan-backend/pkg/tenantstore"
+	"github.com/CriarBrand/qianchuan-backend/pkg/tokenstore"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/memstore"
 	"github.com/gin-gonic/gin"
@@ -80,6 +80,7 @@ func main() {
 
 func buildRouter(appID int64, appSecret string) *gin.Engine {
 	client := sdk.NewOceanengineClient(appID, appSecret)
+	client.SetMinRequestInterval(time.Duration(envInt64("QIANCHUAN_MIN_REQUEST_INTERVAL_MS", 250)) * time.Millisecond)
 	qianchuanService := service.NewQianchuanService(client, appID, appSecret)
 	tokenStorePath := envString("TOKEN_STORE_PATH", "data/tokens.json")
 	tokenEncryptionKey := envString("TOKEN_ENCRYPTION_KEY", "")
@@ -96,6 +97,8 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	qianchuanService.DefaultAwemeID = envInt64("QIANCHUAN_DEFAULT_AWEME_ID", 0)
 	qianchuanService.DefaultLiveRoomID = envInt64("QIANCHUAN_DEFAULT_LIVE_ROOM_ID", 0)
 	operationsWriteEnabled := envBool("OPERATIONS_WRITE_ENABLED", false)
+	materialChaseWriteEnabled := envBool("MATERIAL_CHASE_WRITE_ENABLED", false)
+	planCRUDTestWriteEnabled := envBool("PLAN_CRUD_TEST_WRITE_ENABLED", false)
 	tenants, err := tenantstore.New(
 		envString("TENANT_STORE_PATH", "data/tenants.json"),
 		envString("TENANT_ENCRYPTION_KEY", ""),
@@ -106,15 +109,17 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	authStates := authstate.New(10 * time.Minute)
 	oauthAuthorizationURL := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn") + "/oauth/authorize"
 	tenantFactory, err := mcp.NewTenantFactory(mcp.TenantFactoryOptions{
-		Client:                client,
-		AppID:                 appID,
-		AppSecret:             appSecret,
-		TokenRoot:             mcp.TenantTokenRoot(tokenStorePath),
-		TokenEncryptionKey:    tokenEncryptionKey,
-		WriteEnabled:          operationsWriteEnabled,
-		OAuthAuthorizationURL: oauthAuthorizationURL,
-		IssueAuthState:        authStates.Issue,
-		IssueAccountAuthState: authStates.IssueForAccount,
+		Client:                    client,
+		AppID:                     appID,
+		AppSecret:                 appSecret,
+		TokenRoot:                 mcp.TenantTokenRoot(tokenStorePath),
+		TokenEncryptionKey:        tokenEncryptionKey,
+		WriteEnabled:              operationsWriteEnabled,
+		MaterialChaseWriteEnabled: materialChaseWriteEnabled,
+		PlanCRUDTestWriteEnabled:  planCRUDTestWriteEnabled,
+		OAuthAuthorizationURL:     oauthAuthorizationURL,
+		IssueAuthState:            authStates.Issue,
+		IssueAccountAuthState:     authStates.IssueForAccount,
 	})
 	if err != nil {
 		log.Fatalf("initialize tenant runtime factory: %v", err)

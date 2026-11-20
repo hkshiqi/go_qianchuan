@@ -64,6 +64,10 @@ func TestInitializeAndToolsList(t *testing.T) {
 		"qianchuan_evaluate_rules",
 		"qianchuan_rotate_materials",
 		"qianchuan_set_plan_budget",
+		"qianchuan_list_available_products",
+		"qianchuan_create_test_product_plan",
+		"qianchuan_rename_test_product_plan",
+		"qianchuan_delete_test_product_plan",
 	} {
 		if !bytes.Contains(encoded, []byte(`"`+name+`"`)) {
 			t.Errorf("missing tool %s", name)

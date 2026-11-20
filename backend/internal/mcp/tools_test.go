@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -150,6 +152,32 @@ func TestReportFiltersIncludeMaterialVideoTypeCode(t *testing.T) {
 	}
 	if len(filters) != 1 || filters[0].Field != "roi2_material_video_type" ||
 		len(filters[0].Values) != 1 || filters[0].Values[0] != "1" {
+		t.Fatalf("filters = %#v", filters)
+	}
+}
+
+func TestReportFiltersSelectOfficialLiveVideoMaterialType(t *testing.T) {
+	config := sdk.UniPromotionReportTopicConfig{
+		Dimensions: []sdk.UniPromotionReportDimension{
+			{
+				Field: "roi2_material_type_v3",
+				FilterConfig: &sdk.UniPromotionReportFilterConfig{
+					Operator: 7,
+					RangeValues: []sdk.UniPromotionReportFilterRangeValue{
+						{Label: "1", Value: "标题"},
+						{Label: "3", Value: "视频"},
+						{Label: "6", Value: "图片"},
+					},
+				},
+			},
+		},
+	}
+	filters, err := reportFilters(config, "2026-11-20", "2026-11-20", tenantstore.AccountBinding{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 || filters[0].Field != "roi2_material_type_v3" ||
+		len(filters[0].Values) != 1 || filters[0].Values[0] != "3" {
 		t.Fatalf("filters = %#v", filters)
 	}
 }
@@ -323,6 +351,103 @@ func TestMaterialFromReportRowUnwrapsOfficialValues(t *testing.T) {
 	}
 }
 
+func TestMaterialFromReportRowKeepsLargeMaterialIDPrecision(t *testing.T) {
+	row := sdk.UniPromotionReportRow{
+		Dimensions: map[string]any{
+			"material_id": json.Number("7654214461952425993"),
+		},
+		Metrics: map[string]any{
+			"stat_cost_for_roi2": json.Number("416.25"),
+		},
+	}
+	material := materialFromReportRow(row, 1)
+	if material.MaterialID != "7654214461952425993" || material.Cost != 416.25 {
+		t.Fatalf("material = %#v", material)
+	}
+}
+
+func TestMaterialThresholdBoundaryKeepsSingleThresholdEligible(t *testing.T) {
+	config := DefaultRuleConfig()
+	tests := []struct {
+		name     string
+		material MaterialMetrics
+		eligible bool
+		dual     bool
+	}{
+		{
+			name:     "ctr only at exact boundary",
+			material: MaterialMetrics{CTR: 7, ConversionRate: 1},
+			eligible: true,
+		},
+		{
+			name:     "conversion only just inside boundary",
+			material: MaterialMetrics{CTR: 1, ConversionRate: 7.9999999999},
+			eligible: true,
+		},
+		{
+			name:     "ctr only above boundary",
+			material: MaterialMetrics{CTR: 7.0000000001, ConversionRate: 1},
+			eligible: true,
+		},
+		{
+			name:     "conversion only above boundary",
+			material: MaterialMetrics{CTR: 1, ConversionRate: 8.0000000001},
+			eligible: true,
+		},
+		{
+			name:     "dual exact boundaries",
+			material: MaterialMetrics{CTR: 7, ConversionRate: 8},
+			eligible: true,
+			dual:     true,
+		},
+		{
+			name:     "below both boundaries",
+			material: MaterialMetrics{CTR: 6.999999, ConversionRate: 7.999999},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := materialThresholdPassed(test.material, config); actual != test.eligible {
+				t.Fatalf("eligible = %v, want %v", actual, test.eligible)
+			}
+			dual := len(dualThresholdMaterials([]MaterialMetrics{test.material}, config)) == 1
+			if dual != test.dual {
+				t.Fatalf("dual = %v, want %v", dual, test.dual)
+			}
+		})
+	}
+}
+
+func TestMaterialChaseWriteRequiresDedicatedSwitchAndConfirmation(t *testing.T) {
+	tools := &Tools{}
+	if err := tools.requireMaterialChaseWrite(map[string]any{"confirm": true}); err == nil {
+		t.Fatal("write switch disabled: expected refusal")
+	}
+	tools.materialChaseWriteEnabled = true
+	if err := tools.requireMaterialChaseWrite(map[string]any{}); err == nil {
+		t.Fatal("missing confirm=true: expected refusal")
+	}
+	if err := tools.requireMaterialChaseWrite(map[string]any{"confirm": "true"}); err == nil {
+		t.Fatal("non-boolean confirm: expected refusal")
+	}
+	if err := tools.requireMaterialChaseWrite(map[string]any{"confirm": true}); err != nil {
+		t.Fatalf("valid write guard refused: %v", err)
+	}
+}
+
+func TestControlTaskMaterialIDComparisonIgnoresOrder(t *testing.T) {
+	materials := []sdk.UniPromotionControlTaskMaterial{
+		{MaterialId: 7660659586093924358},
+		{MaterialId: 7662517346247393343},
+	}
+	if !sameIDSet(materials, []string{"7662517346247393343", "7660659586093924358"}) {
+		t.Fatal("reordered material IDs should match")
+	}
+	if sameIDSet(materials, []string{"7662517346247393343"}) {
+		t.Fatal("material ID subset should not match")
+	}
+}
+
 func TestReportPageSizeUsesOfficialAllowedValues(t *testing.T) {
 	tests := map[int]int{
 		1:   10,
@@ -337,6 +462,81 @@ func TestReportPageSizeUsesOfficialAllowedValues(t *testing.T) {
 		if actual := reportPageSize(input); actual != expected {
 			t.Errorf("reportPageSize(%d) = %d, want %d", input, actual, expected)
 		}
+	}
+}
+
+func TestPlanMaterialsPaginationKeepsProtectedTop3(t *testing.T) {
+	materials := make([]MaterialMetrics, 0, 25)
+	for index := 1; index <= 25; index++ {
+		materials = append(materials, MaterialMetrics{
+			MaterialID:      fmt.Sprintf("material-%d", index),
+			Cost:            float64(100 - index),
+			CostRank:        index,
+			ProtectedTop3:   index <= 3,
+			EligibleReplace: index > 3,
+		})
+	}
+	result := materialPage(materials, 2, 10)
+	page, ok := result["page_info"].(sdk.PageInfo)
+	if !ok {
+		t.Fatalf("page_info type = %T", result["page_info"])
+	}
+	if page.Page != 2 || page.PageSize != 10 || page.TotalNumber != 25 || page.TotalPage != 3 {
+		t.Fatalf("page_info = %#v", page)
+	}
+	rows, ok := result["materials"].([]MaterialMetrics)
+	if !ok {
+		t.Fatalf("materials type = %T", result["materials"])
+	}
+	if len(rows) != 10 || rows[0].CostRank != 11 {
+		t.Fatalf("page rows = %#v", rows)
+	}
+	protected, ok := result["protected_top3"].([]MaterialMetrics)
+	if !ok {
+		t.Fatalf("protected type = %T", result["protected_top3"])
+	}
+	if len(protected) != 3 || protected[0].CostRank != 1 || protected[2].CostRank != 3 {
+		t.Fatalf("protected = %#v", protected)
+	}
+}
+
+func TestSelectLivingRoomPrefersCurrentLiveRoom(t *testing.T) {
+	rooms := []map[string]any{
+		{"room_id": "7709635958206991154", "room_status": "FINISH", "start_time": "2026-11-20 08:00:00"},
+		{"room_id": "7710006340290513690", "room_status": "LIVING", "start_time": "2026-11-20 19:00:00"},
+	}
+	room, warnings := selectLivingRoom(rooms)
+	if len(warnings) != 0 || room == nil {
+		t.Fatalf("room = %#v warnings = %#v", room, warnings)
+	}
+	if actual := liveRoomIDFromMap(room); actual != "7710006340290513690" {
+		t.Fatalf("room_id = %q", actual)
+	}
+}
+
+func TestNormalizeLiveReportAmountsConvertsThousandthCent(t *testing.T) {
+	values := normalizeLiveReportAmountsMap(map[string]any{
+		"stat_cost":                float64(2500000),
+		"luban_live_pay_order_gmv": float64(5000000),
+		"live_pay_order_gmv_alias": float64(9000000),
+		"total_live_pay_order_gpm": float64(123.4),
+	})
+	if values["stat_cost"] != float64(25) ||
+		values["luban_live_pay_order_gmv"] != float64(50) ||
+		values["live_pay_order_gmv_alias"] != float64(90) ||
+		values["total_live_pay_order_gpm"] != float64(123.4) {
+		t.Fatalf("normalized live values = %#v", values)
+	}
+}
+
+func TestPageInfoAcceptsOfficialTotalNum(t *testing.T) {
+	var page sdk.PageInfo
+	err := json.Unmarshal([]byte(`{"page":1,"page_size":100,"total_page":4,"total_num":361}`), &page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalNumber != 361 || page.TotalPage != 4 {
+		t.Fatalf("page = %#v", page)
 	}
 }
 

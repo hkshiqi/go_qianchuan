@@ -25,6 +25,8 @@ type QianchuanClient interface {
 	CustomerCenterAdvertiserList(ctx context.Context, req CustomerCenterAdvertiserListReq) (*CustomerCenterAdvertiserListRes, error)
 	AwemeAuthorizedGet(ctx context.Context, req AwemeAuthorizedGetReq) (*AwemeAuthorizedGetRes, error)
 	ProductAvailableGet(ctx context.Context, req ProductAvailableGetReq) (*ProductAvailableGetRes, error)
+	UniPromotionProductAvailableGet(ctx context.Context, req UniPromotionProductAvailableGetReq) (*UniPromotionProductAvailableGetRes, error)
+	OverallAwemeList(ctx context.Context, req OverallAwemeListReq) (*OverallAwemeListRes, error)
 
 	// ===== Campaign =====
 	CampaignListGet(ctx context.Context, req CampaignListGetReq) (*CampaignListGetRes, error)
@@ -115,8 +117,12 @@ type QianchuanClient interface {
 	UniPromotionReportData(ctx context.Context, req UniPromotionReportDataReq) (*UniPromotionReportDataRes, error)
 	UniPromotionDetail(ctx context.Context, req UniPromotionDetailReq) (*UniPromotionDetailRes, error)
 	UniPromotionCreate(ctx context.Context, req UniPromotionCreateReq) (*UniPromotionCreateRes, error)
+	UniPromotionProductPlanCreate(ctx context.Context, req UniPromotionProductPlanCreateReq) (*UniPromotionProductPlanCreateRes, error)
+	OverallProductPlanCreate(ctx context.Context, req OverallProductPlanCreateReq) (*OverallProductPlanCreateRes, error)
+	OverallProductPlanNameUpdate(ctx context.Context, req OverallProductPlanNameUpdateReq) (*UniPromotionNameUpdateRes, error)
 	UniPromotionUpdate(ctx context.Context, req UniPromotionUpdateReq) (*UniPromotionUpdateRes, error)
 	UniPromotionStatusUpdate(ctx context.Context, req UniPromotionStatusUpdateReq) (*UniPromotionStatusUpdateRes, error)
+	UniPromotionNameUpdate(ctx context.Context, req UniPromotionNameUpdateReq) (*UniPromotionNameUpdateRes, error)
 	UniPromotionBudgetUpdate(ctx context.Context, req UniPromotionBudgetUpdateReq) (*UniPromotionBudgetUpdateRes, error)
 	UniPromotionRoiGoalUpdate(ctx context.Context, req UniPromotionRoiGoalUpdateReq) (*UniPromotionRoiGoalUpdateRes, error)
 	UniPromotionScheduleUpdate(ctx context.Context, req UniPromotionScheduleUpdateReq) (*UniPromotionScheduleUpdateRes, error)
@@ -125,6 +131,8 @@ type QianchuanClient interface {
 	UniPromotionMaterialDelete(ctx context.Context, req UniPromotionMaterialDeleteReq) (*UniPromotionMaterialDeleteRes, error)
 	UniPromotionAuthorizedGet(ctx context.Context, req UniPromotionAuthorizedGetReq) (*UniPromotionAuthorizedGetRes, error)
 	UniPromotionAuthInit(ctx context.Context, req UniPromotionAuthInitReq) (*UniPromotionAuthInitRes, error)
+	UniPromotionControlTaskCreate(ctx context.Context, req UniPromotionControlTaskCreateReq) (*UniPromotionControlTaskCreateRes, error)
+	UniPromotionControlTaskList(ctx context.Context, req UniPromotionControlTaskListReq) (*UniPromotionControlTaskListRes, error)
 }
 
 // QianchuanError 统一错误类型

@@ -29,29 +29,33 @@ type TenantRuntime struct {
 }
 
 type TenantFactory struct {
-	client             sdk.QianchuanClient
-	appID              int64
-	appSecret          string
-	tokenRoot          string
-	tokenEncryptionKey string
-	writeEnabled       bool
-	oauthAuthorization string
-	states             func(tenantID string) (string, error)
-	accountStates      func(tenantID string, accountID int64) (string, error)
-	mu                 sync.Mutex
-	runtimes           map[string]*TenantRuntime
+	client                    sdk.QianchuanClient
+	appID                     int64
+	appSecret                 string
+	tokenRoot                 string
+	tokenEncryptionKey        string
+	writeEnabled              bool
+	materialChaseWriteEnabled bool
+	planCRUDTestWriteEnabled  bool
+	oauthAuthorization        string
+	states                    func(tenantID string) (string, error)
+	accountStates             func(tenantID string, accountID int64) (string, error)
+	mu                        sync.Mutex
+	runtimes                  map[string]*TenantRuntime
 }
 
 type TenantFactoryOptions struct {
-	Client                sdk.QianchuanClient
-	AppID                 int64
-	AppSecret             string
-	TokenRoot             string
-	TokenEncryptionKey    string
-	WriteEnabled          bool
-	OAuthAuthorizationURL string
-	IssueAuthState        func(tenantID string) (string, error)
-	IssueAccountAuthState func(tenantID string, accountID int64) (string, error)
+	Client                    sdk.QianchuanClient
+	AppID                     int64
+	AppSecret                 string
+	TokenRoot                 string
+	TokenEncryptionKey        string
+	WriteEnabled              bool
+	MaterialChaseWriteEnabled bool
+	PlanCRUDTestWriteEnabled  bool
+	OAuthAuthorizationURL     string
+	IssueAuthState            func(tenantID string) (string, error)
+	IssueAccountAuthState     func(tenantID string, accountID int64) (string, error)
 }
 
 func NewTenantFactory(options TenantFactoryOptions) (*TenantFactory, error) {
@@ -68,16 +72,18 @@ func NewTenantFactory(options TenantFactoryOptions) (*TenantFactory, error) {
 		return nil, errors.New("OAuth state issuer is required")
 	}
 	return &TenantFactory{
-		client:             options.Client,
-		appID:              options.AppID,
-		appSecret:          options.AppSecret,
-		tokenRoot:          filepath.Clean(options.TokenRoot),
-		tokenEncryptionKey: options.TokenEncryptionKey,
-		writeEnabled:       options.WriteEnabled,
-		oauthAuthorization: options.OAuthAuthorizationURL,
-		states:             options.IssueAuthState,
-		accountStates:      options.IssueAccountAuthState,
-		runtimes:           make(map[string]*TenantRuntime),
+		client:                    options.Client,
+		appID:                     options.AppID,
+		appSecret:                 options.AppSecret,
+		tokenRoot:                 filepath.Clean(options.TokenRoot),
+		tokenEncryptionKey:        options.TokenEncryptionKey,
+		writeEnabled:              options.WriteEnabled,
+		materialChaseWriteEnabled: options.MaterialChaseWriteEnabled,
+		planCRUDTestWriteEnabled:  options.PlanCRUDTestWriteEnabled,
+		oauthAuthorization:        options.OAuthAuthorizationURL,
+		states:                    options.IssueAuthState,
+		accountStates:             options.IssueAccountAuthState,
+		runtimes:                  make(map[string]*TenantRuntime),
 	}, nil
 }
 
@@ -429,6 +435,8 @@ func (f *TenantFactory) runtimeFor(tenant tenantstore.Tenant) (*TenantRuntime, e
 	runtimeService := service.NewQianchuanService(f.client, f.appID, f.appSecret)
 	runtimeService.TokenManager = manager
 	tools := NewTools(runtimeService, f.writeEnabled, "")
+	tools.materialChaseWriteEnabled = f.materialChaseWriteEnabled
+	tools.planCRUDTestWriteEnabled = f.planCRUDTestWriteEnabled
 	tools.tenant = TenantIdentity{ID: tenantID}
 	tools.accounts = tenant.AccountList()
 	tools.authURLBuilder = f.authorizationURL

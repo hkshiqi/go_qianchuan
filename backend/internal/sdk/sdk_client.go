@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1931,43 +1932,56 @@ func (c *OceanengineClient) LiveGet(ctx context.Context, req LiveGetReq) (*LiveG
 }
 
 func (c *OceanengineClient) LiveRoomGet(ctx context.Context, req LiveRoomGetReq) (*LiveRoomGetRes, error) {
-	oeReq := &liveModel.RoomGetRequest{
-		AdvertiserID: uint64(req.AdvertiserId),
-		AwemeID:      uint64(req.AwemeId),
-		Page:         int(req.Page),
-		PageSize:     int(req.PageSize),
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
 	}
-
-	data, err := liveAPI.RoomGet(ctx, c.client, req.AccessToken, oeReq)
+	values := url.Values{}
+	values.Set("advertiser_id", strconv.FormatInt(req.AdvertiserId, 10))
+	values.Set("aweme_id", strconv.FormatInt(req.AwemeId, 10))
+	values.Set("date_time", req.DateTime)
+	if req.RoomStatus != "" {
+		values.Set("room_status", req.RoomStatus)
+	}
+	if req.AdStatus != "" {
+		values.Set("ad_status", req.AdStatus)
+	}
+	if len(req.Fields) > 0 {
+		fields, _ := json.Marshal(req.Fields)
+		values.Set("fields", string(fields))
+	}
+	if req.Page > 0 {
+		values.Set("page", strconv.FormatInt(req.Page, 10))
+	}
+	if req.PageSize > 0 {
+		values.Set("page_size", strconv.FormatInt(req.PageSize, 10))
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/today_live/room/get/?"+values.Encode(),
+		nil,
+	)
 	if err != nil {
-		return &LiveRoomGetRes{
-			Code:    500,
-			Message: err.Error(),
-		}, nil
+		return nil, err
 	}
-
-	res := &LiveRoomGetRes{
-		Code:    0,
-		Message: "success",
+	request.Header.Set("Access-Token", req.AccessToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
 	}
-
-	if data != nil {
-		list := make([]interface{}, len(data.RoomList))
-		for i, item := range data.RoomList {
-			list[i] = item
-		}
-		res.Data.List = list
-		if data.PageInfo != nil {
-			res.Data.PageInfo = PageInfo{
-				Page:        data.PageInfo.Page,
-				PageSize:    data.PageInfo.PageSize,
-				TotalNumber: int64(data.PageInfo.TotalNumber),
-				TotalPage:   data.PageInfo.TotalPage,
-			}
-		}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
 	}
-
-	return res, nil
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("today live rooms HTTP %d: %s", response.StatusCode, string(body))
+	}
+	var result LiveRoomGetRes
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode today live rooms: %w", err)
+	}
+	return &result, nil
 }
 
 func (c *OceanengineClient) LiveRoomDetailGet(ctx context.Context, req LiveRoomDetailGetReq) (*LiveRoomDetailGetRes, error) {
@@ -2634,23 +2648,25 @@ func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromoti
 		return nil, fmt.Errorf("uni promotion list HTTP %d: %s", httpResponse.StatusCode, string(body))
 	}
 	var result struct {
-		Code    int64  `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
+		Code      int64  `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+		Data      struct {
 			AdList []struct {
 				AdInfo struct {
-					ID            uint64  `json:"id"`
-					Name          string  `json:"name"`
-					MarketingGoal string  `json:"marketing_goal"`
-					Status        string  `json:"status"`
-					OptStatus     string  `json:"opt_status"`
-					Budget        float64 `json:"budget"`
-					Roi2Goal      float64 `json:"roi2_goal"`
-					StartTime     string  `json:"start_time"`
-					EndTime       string  `json:"end_time"`
-					CreateTime    string  `json:"create_time"`
-					ModifyTime    string  `json:"modify_time"`
-					SmartBidType  string  `json:"smart_bid_type"`
+					ID            uint64     `json:"id"`
+					Name          string     `json:"name"`
+					MarketingGoal string     `json:"marketing_goal"`
+					AdlabScene    AdlabScene `json:"adlab_scene"`
+					Status        string     `json:"status"`
+					OptStatus     string     `json:"opt_status"`
+					Budget        float64    `json:"budget"`
+					Roi2Goal      float64    `json:"roi2_goal"`
+					StartTime     string     `json:"start_time"`
+					EndTime       string     `json:"end_time"`
+					CreateTime    string     `json:"create_time"`
+					ModifyTime    string     `json:"modify_time"`
+					SmartBidType  string     `json:"smart_bid_type"`
 				} `json:"ad_info"`
 				StatsInfo *struct {
 					StatCost                   float64 `json:"stat_cost"`
@@ -2675,6 +2691,7 @@ func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromoti
 			AdId:          ad.AdInfo.ID,
 			AdName:        ad.AdInfo.Name,
 			MarketingGoal: ad.AdInfo.MarketingGoal,
+			AdlabScene:    ad.AdInfo.AdlabScene,
 			Status:        ad.AdInfo.Status,
 			OptStatus:     ad.AdInfo.OptStatus,
 			Budget:        ad.AdInfo.Budget,
@@ -2689,7 +2706,7 @@ func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromoti
 			plan.AwemeId, _ = strconv.ParseUint(ad.RoomInfo[0].AnchorID, 10, 64)
 		}
 		if ad.StatsInfo != nil {
-			plan.StatCost = ad.StatsInfo.StatCost
+			plan.StatCost = ad.StatsInfo.StatCost / 100000
 			plan.PayOrderCount = ad.StatsInfo.TotalPayOrderCountForRoi2
 			plan.PayOrderGMV = ad.StatsInfo.TotalPayOrderGmvForRoi2
 			plan.PayOrderROI = ad.StatsInfo.TotalPrepayAndPayOrderRoi2
@@ -2811,30 +2828,95 @@ func (c *OceanengineClient) UniPromotionReportData(
 }
 
 func (c *OceanengineClient) UniPromotionDetail(ctx context.Context, req UniPromotionDetailReq) (*UniPromotionDetailRes, error) {
-	oeReq := &uniPromotionModel.DetailRequest{
-		AdvertiserID: req.AdvertiserId,
-		AdID:         req.AdId,
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
 	}
-
-	result, err := uniPromotionAPI.Detail(ctx, c.client, req.AccessToken, oeReq)
+	values := url.Values{}
+	values.Set("advertiser_id", strconv.FormatUint(req.AdvertiserId, 10))
+	values.Set("ad_id", strconv.FormatUint(req.AdId, 10))
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/uni_promotion/ad/detail/?"+values.Encode(),
+		nil,
+	)
 	if err != nil {
-		return &UniPromotionDetailRes{
-			Code:    500,
-			Message: err.Error(),
-		}, nil
+		return nil, err
 	}
-
-	res := &UniPromotionDetailRes{
-		Code:    0,
-		Message: "success",
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
 	}
-	if result != nil {
-		detail := &UniPromotionDetail{
-			UniPromotion: convertOeAdDetailToUniPromotion(result),
-		}
-		res.Data = detail
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("uni promotion detail HTTP %d: %s", response.StatusCode, string(body))
+	}
+	res, err := decodeUniPromotionDetail(body)
+	if err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+func decodeUniPromotionDetail(body []byte) (*UniPromotionDetailRes, error) {
+	var result UniPromotionDetailRes
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode uni promotion detail: %w", err)
+	}
+	if result.Code != 0 || result.Data == nil {
+		return &result, nil
+	}
+	detail := result.Data
+	plan := UniPromotion{
+		AdId:          detail.AdId,
+		AdName:        detail.Name,
+		MarketingGoal: detail.MarketingGoal,
+		Status:        detail.Status,
+		OptStatus:     detail.OptStatus,
+		CreateTime:    detail.CreateTime,
+		ModifyTime:    detail.ModifyTime,
+		AwemeId:       detail.AwemeId,
+	}
+	if setting := detail.DeliverySetting; setting != nil {
+		plan.Budget = setting.Budget
+		plan.Roi2Goal = setting.Roi2Goal
+		plan.SmartBidType = setting.SmartBidType
+		plan.DeepBidType = setting.DeepBidType
+		plan.StartTime = setting.StartTime
+		plan.EndTime = setting.EndTime
+	}
+	if len(detail.RoomInfo) > 0 {
+		plan.AwemeId = detail.RoomInfo[0].AnchorID
+		plan.AwemeName = detail.RoomInfo[0].AnchorName
+	}
+	if len(detail.AwemeInfos) > 0 {
+		if plan.AwemeId == 0 {
+			plan.AwemeId = detail.AwemeInfos[0].AwemeUID
+		}
+		if plan.AwemeName == "" {
+			plan.AwemeName = detail.AwemeInfos[0].AwemeName
+		}
+	}
+	detail.AdName = plan.AdName
+	detail.MarketingGoal = plan.MarketingGoal
+	detail.Status = plan.Status
+	detail.OptStatus = plan.OptStatus
+	detail.Budget = plan.Budget
+	detail.Roi2Goal = plan.Roi2Goal
+	detail.SmartBidType = plan.SmartBidType
+	detail.DeepBidType = plan.DeepBidType
+	detail.AwemeId = plan.AwemeId
+	detail.AwemeName = plan.AwemeName
+	detail.StartTime = plan.StartTime
+	detail.EndTime = plan.EndTime
+	detail.CreateTime = plan.CreateTime
+	detail.ModifyTime = plan.ModifyTime
+	return &result, nil
 }
 
 func (c *OceanengineClient) UniPromotionCreate(ctx context.Context, req UniPromotionCreateReq) (*UniPromotionCreateRes, error) {
@@ -3283,6 +3365,133 @@ func (c *OceanengineClient) UniPromotionAuthInit(ctx context.Context, req UniPro
 		Code:    0,
 		Message: "success",
 	}, nil
+}
+
+func (c *OceanengineClient) UniPromotionControlTaskCreate(
+	ctx context.Context,
+	req UniPromotionControlTaskCreateReq,
+) (*UniPromotionControlTaskCreateRes, error) {
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
+	}
+	payload := struct {
+		AdvertiserID   uint64   `json:"advertiser_id"`
+		AdID           uint64   `json:"ad_id"`
+		Name           string   `json:"name,omitempty"`
+		Scene          string   `json:"scene"`
+		Budget         float64  `json:"budget"`
+		MaterialIDs    []uint64 `json:"material_ids"`
+		ExternalAction string   `json:"external_action"`
+		SmartBidType   string   `json:"smart_bid_type"`
+		Bid            float64  `json:"bid"`
+		MaterialType   string   `json:"material_type"`
+	}{
+		AdvertiserID:   req.AdvertiserId,
+		AdID:           req.AdId,
+		Name:           req.Name,
+		Scene:          req.Scene,
+		Budget:         req.Budget,
+		MaterialIDs:    req.MaterialIds,
+		ExternalAction: req.ExternalAction,
+		SmartBidType:   req.SmartBidType,
+		Bid:            req.Bid,
+		MaterialType:   req.MaterialType,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/uni_promotion/ad/control_task/create/",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("create material chase HTTP %d: %s", response.StatusCode, string(responseBody))
+	}
+	var result UniPromotionControlTaskCreateRes
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return nil, fmt.Errorf("decode material chase create response: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *OceanengineClient) UniPromotionControlTaskList(
+	ctx context.Context,
+	req UniPromotionControlTaskListReq,
+) (*UniPromotionControlTaskListRes, error) {
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
+	}
+	values := url.Values{}
+	values.Set("advertiser_id", strconv.FormatUint(req.AdvertiserId, 10))
+	values.Set("marketing_goal", req.MarketingGoal)
+	values.Set("ad_id", strconv.FormatUint(req.AdId, 10))
+	values.Set("start_time", req.StartTime)
+	values.Set("end_time", req.EndTime)
+	values.Set("scene", req.Scene)
+	if len(req.Fields) > 0 {
+		fields, _ := json.Marshal(req.Fields)
+		values.Set("fields", string(fields))
+	}
+	if req.Filtering != nil {
+		filtering, _ := json.Marshal(req.Filtering)
+		values.Set("filtering", string(filtering))
+	}
+	if req.OrderType != "" {
+		values.Set("order_type", strings.ToUpper(req.OrderType))
+	}
+	if req.OrderField != "" {
+		values.Set("order_field", req.OrderField)
+	}
+	if req.Page > 0 {
+		values.Set("page", strconv.Itoa(req.Page))
+	}
+	if req.PageSize > 0 {
+		values.Set("page_size", strconv.Itoa(req.PageSize))
+	}
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/uni_promotion/ad/control_task/list/?"+values.Encode(),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("list material chase HTTP %d: %s", response.StatusCode, string(body))
+	}
+	var result UniPromotionControlTaskListRes
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode material chase list response: %w", err)
+	}
+	return &result, nil
 }
 
 // ===== Helper Functions =====

@@ -1,6 +1,11 @@
 package sdk
 
-import "strconv"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // ===========================
 // 项目内部 DTO 类型定义
@@ -1061,19 +1066,23 @@ type LiveGetRes struct {
 }
 
 type LiveRoomGetReq struct {
-	AccessToken  string `json:"access_token"`
-	AdvertiserId int64  `json:"advertiser_id"`
-	AwemeId      int64  `json:"aweme_id"`
-	Page         int64  `json:"page"`
-	PageSize     int64  `json:"page_size"`
+	AccessToken  string   `json:"access_token"`
+	AdvertiserId int64    `json:"advertiser_id"`
+	AwemeId      int64    `json:"aweme_id"`
+	DateTime     string   `json:"date_time"`
+	RoomStatus   string   `json:"room_status,omitempty"`
+	AdStatus     string   `json:"ad_status,omitempty"`
+	Fields       []string `json:"fields,omitempty"`
+	Page         int64    `json:"page"`
+	PageSize     int64    `json:"page_size"`
 }
 
 type LiveRoomGetRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		List     []interface{} `json:"list"`
-		PageInfo PageInfo      `json:"page_info"`
+		Rooms    []map[string]json.RawMessage `json:"room_list"`
+		PageInfo PageInfo                     `json:"page_info"`
 	} `json:"data"`
 }
 
@@ -1362,28 +1371,29 @@ type PrivatewordsUpdateRes struct {
 // ===== UniPromotion (全域推广) Types =====
 
 type UniPromotion struct {
-	AdId          uint64  `json:"ad_id"`
-	AdName        string  `json:"ad_name"`
-	AdvertiserId  uint64  `json:"advertiser_id"`
-	MarketingGoal string  `json:"marketing_goal"`
-	Status        string  `json:"status"`
-	OptStatus     string  `json:"opt_status"`
-	Budget        float64 `json:"budget"`
-	Roi2Goal      float64 `json:"roi2_goal"`
-	DeepBidType   string  `json:"deep_bid_type"`
-	AwemeId       uint64  `json:"aweme_id"`
-	AwemeName     string  `json:"aweme_name"`
-	ProductId     uint64  `json:"product_id"`
-	ProductName   string  `json:"product_name"`
-	StartTime     string  `json:"start_time"`
-	EndTime       string  `json:"end_time"`
-	CreateTime    string  `json:"create_time"`
-	ModifyTime    string  `json:"modify_time"`
-	SmartBidType  string  `json:"smart_bid_type,omitempty"`
-	StatCost      float64 `json:"stat_cost"`
-	PayOrderCount float64 `json:"total_pay_order_count_for_roi2"`
-	PayOrderGMV   float64 `json:"total_pay_order_gmv_for_roi2"`
-	PayOrderROI   float64 `json:"total_prepay_and_pay_order_roi2"`
+	AdId          uint64     `json:"ad_id"`
+	AdName        string     `json:"ad_name"`
+	AdvertiserId  uint64     `json:"advertiser_id"`
+	MarketingGoal string     `json:"marketing_goal"`
+	AdlabScene    AdlabScene `json:"adlab_scene,omitempty"`
+	Status        string     `json:"status"`
+	OptStatus     string     `json:"opt_status"`
+	Budget        float64    `json:"budget"`
+	Roi2Goal      float64    `json:"roi2_goal"`
+	DeepBidType   string     `json:"deep_bid_type"`
+	AwemeId       uint64     `json:"aweme_id"`
+	AwemeName     string     `json:"aweme_name"`
+	ProductId     uint64     `json:"product_id"`
+	ProductName   string     `json:"product_name"`
+	StartTime     string     `json:"start_time"`
+	EndTime       string     `json:"end_time"`
+	CreateTime    string     `json:"create_time"`
+	ModifyTime    string     `json:"modify_time"`
+	SmartBidType  string     `json:"smart_bid_type,omitempty"`
+	StatCost      float64    `json:"stat_cost"`
+	PayOrderCount float64    `json:"total_pay_order_count_for_roi2"`
+	PayOrderGMV   float64    `json:"total_pay_order_gmv_for_roi2"`
+	PayOrderROI   float64    `json:"total_prepay_and_pay_order_roi2"`
 }
 
 type UniPromotionListReq struct {
@@ -1424,17 +1434,136 @@ type UniPromotionDetailReq struct {
 }
 
 type UniPromotionDetailRes struct {
-	Code    int64               `json:"code"`
-	Message string              `json:"message"`
-	Data    *UniPromotionDetail `json:"data"`
+	Code      int64               `json:"code"`
+	Message   string              `json:"message"`
+	RequestID string              `json:"request_id,omitempty"`
+	Data      *UniPromotionDetail `json:"data"`
 }
 
 type UniPromotionDetail struct {
-	UniPromotion
-	LabAdType         string   `json:"lab_ad_type"`
-	AutoExtendEnabled int      `json:"auto_extend_enabled"`
-	VideoMaterial     []string `json:"video_material"`
-	ImageMaterial     []string `json:"image_material"`
+	AdId                          uint64                                 `json:"ad_id"`
+	AdvertiserId                  uint64                                 `json:"advertiser_id,omitempty"`
+	AdName                        string                                 `json:"ad_name"`
+	MarketingGoal                 string                                 `json:"marketing_goal,omitempty"`
+	Status                        string                                 `json:"status,omitempty"`
+	OptStatus                     string                                 `json:"opt_status,omitempty"`
+	Budget                        float64                                `json:"budget"`
+	Roi2Goal                      float64                                `json:"roi2_goal"`
+	SmartBidType                  string                                 `json:"smart_bid_type,omitempty"`
+	DeepBidType                   string                                 `json:"deep_bid_type,omitempty"`
+	CreateTime                    string                                 `json:"create_time,omitempty"`
+	ModifyTime                    string                                 `json:"modify_time,omitempty"`
+	AwemeId                       uint64                                 `json:"aweme_id,omitempty"`
+	AwemeName                     string                                 `json:"aweme_name,omitempty"`
+	StartTime                     string                                 `json:"start_time,omitempty"`
+	EndTime                       string                                 `json:"end_time,omitempty"`
+	StatCost                      float64                                `json:"stat_cost,omitempty"`
+	PayOrderCount                 float64                                `json:"total_pay_order_count_for_roi2,omitempty"`
+	PayOrderGMV                   float64                                `json:"total_pay_order_gmv_for_roi2,omitempty"`
+	PayOrderROI                   float64                                `json:"total_prepay_and_pay_order_roi2,omitempty"`
+	Name                          string                                 `json:"name,omitempty"`
+	AdlabScene                    AdlabScene                             `json:"adlab_scene,omitempty"`
+	DeliverySetting               *UniPromotionDeliverySetting           `json:"delivery_setting,omitempty"`
+	ProductInfos                  []UniPromotionProductInfo              `json:"product_infos,omitempty"`
+	CreativeSetting               map[string]any                         `json:"creative_setting,omitempty"`
+	RoomInfo                      []UniPromotionRoomInfo                 `json:"room_info,omitempty"`
+	ProgrammaticCreativeMediaList *UniPromotionProgrammaticCreativeMedia `json:"programmatic_creative_media_list,omitempty"`
+	AwemeInfos                    []UniPromotionAwemeInfo                `json:"aweme_infos,omitempty"`
+	LabAdType                     string                                 `json:"lab_ad_type,omitempty"`
+	AutoExtendEnabled             int                                    `json:"auto_extend_enabled,omitempty"`
+}
+
+type UniPromotionProductInfo struct {
+	ProductID   uint64 `json:"product_id,omitempty"`
+	ChannelType string `json:"channel_type,omitempty"`
+	ChannelID   uint64 `json:"channel_id,omitempty"`
+}
+
+// AdlabScene accepts both official response forms: the list API returns
+// OVERALL_PROJECT/UNI_PROJECT while the detail API documents numeric 1/0.
+type AdlabScene string
+
+const (
+	AdlabSceneUni     AdlabScene = "UNI_PROJECT"
+	AdlabSceneOverall AdlabScene = "OVERALL_PROJECT"
+)
+
+func (s *AdlabScene) UnmarshalJSON(data []byte) error {
+	value := strings.TrimSpace(string(data))
+	if value == "" || value == "null" {
+		*s = ""
+		return nil
+	}
+	if value[0] == '"' {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*s = AdlabScene(strings.TrimSpace(text))
+		return nil
+	}
+	var number int64
+	if err := json.Unmarshal(data, &number); err != nil {
+		return fmt.Errorf("decode adlab_scene: %w", err)
+	}
+	switch number {
+	case 1:
+		*s = AdlabSceneOverall
+	case 0:
+		*s = AdlabSceneUni
+	default:
+		*s = AdlabScene(strconv.FormatInt(number, 10))
+	}
+	return nil
+}
+
+type UniPromotionDeliverySetting struct {
+	ExternalAction     string  `json:"external_action,omitempty"`
+	SmartBidType       string  `json:"smart_bid_type,omitempty"`
+	DeepExternalAction string  `json:"deep_external_action,omitempty"`
+	DeepBidType        string  `json:"deep_bid_type,omitempty"`
+	PricingType        string  `json:"pricing_type,omitempty"`
+	Roi2Goal           float64 `json:"roi2_goal,omitempty"`
+	BudgetMode         string  `json:"budget_mode,omitempty"`
+	Budget             float64 `json:"budget,omitempty"`
+	LiveScheduleType   string  `json:"live_schedule_type,omitempty"`
+	StartTime          string  `json:"start_time,omitempty"`
+	EndTime            string  `json:"end_time,omitempty"`
+	QcpxMode           string  `json:"qcpx_mode,omitempty"`
+}
+
+type UniPromotionProgrammaticCreativeMedia struct {
+	VideoMaterial      []UniPromotionCreativeVideoMaterial `json:"video_material,omitempty"`
+	TitleMaterial      []UniPromotionCreativeTitleMaterial `json:"title_material,omitempty"`
+	BlockVideoMaterial []UniPromotionCreativeBlockMaterial `json:"block_video_material,omitempty"`
+}
+
+type UniPromotionCreativeVideoMaterial struct {
+	ImageMode    string `json:"image_mode,omitempty"`
+	VideoID      string `json:"video_id,omitempty"`
+	VideoCoverID string `json:"video_cover_id,omitempty"`
+	AwemeItemID  uint64 `json:"aweme_item_id,omitempty"`
+	StarTraffic  int64  `json:"star_traffic,omitempty"`
+}
+
+type UniPromotionCreativeTitleMaterial struct {
+	Title string `json:"title,omitempty"`
+}
+
+type UniPromotionCreativeBlockMaterial struct {
+	AwemeItemID uint64 `json:"aweme_item_id,omitempty"`
+}
+
+type UniPromotionRoomInfo struct {
+	AnchorID     uint64 `json:"anchor_id,omitempty"`
+	AnchorName   string `json:"anchor_name,omitempty"`
+	AnchorAvatar string `json:"anchor_avatar,omitempty"`
+}
+
+type UniPromotionAwemeInfo struct {
+	AwemeUID  uint64 `json:"aweme_uid,omitempty"`
+	AwemeName string `json:"aweme_name,omitempty"`
+	UniqueID  string `json:"unique_id,omitempty"`
 }
 
 type UniPromotionCreateReq struct {
@@ -1494,9 +1623,10 @@ type UniPromotionStatusUpdateReq struct {
 }
 
 type UniPromotionStatusUpdateRes struct {
-	Code    int64  `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
 		Results []UniPromotionStatusResult `json:"results,omitempty"`
 		AdIds   []uint64                   `json:"ad_ids,omitempty"`
 		Errors  []UniPromotionOpError      `json:"errors,omitempty"`
@@ -1506,6 +1636,7 @@ type UniPromotionStatusUpdateRes struct {
 type UniPromotionStatusResult struct {
 	AdId         uint64 `json:"ad_id"`
 	Success      bool   `json:"success"`
+	Flag         bool   `json:"flag"`
 	ErrorCode    int64  `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 }
@@ -1820,6 +1951,88 @@ type UniPromotionReportRow struct {
 	Metrics    map[string]any `json:"metrics"`
 }
 
+type UniPromotionControlTaskCreateReq struct {
+	AccessToken    string   `json:"-"`
+	AdvertiserId   uint64   `json:"advertiser_id"`
+	AdId           uint64   `json:"ad_id"`
+	Name           string   `json:"name,omitempty"`
+	Scene          string   `json:"scene"`
+	Budget         float64  `json:"budget"`
+	MaterialIds    []uint64 `json:"material_ids"`
+	ExternalAction string   `json:"external_action"`
+	SmartBidType   string   `json:"smart_bid_type"`
+	Bid            float64  `json:"bid"`
+	MaterialType   string   `json:"material_type"`
+}
+
+type UniPromotionControlTaskCreateRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		Id uint64 `json:"id"`
+	} `json:"data"`
+}
+
+type UniPromotionControlTaskListReq struct {
+	AccessToken   string                                `json:"-"`
+	AdvertiserId  uint64                                `json:"advertiser_id"`
+	MarketingGoal string                                `json:"marketing_goal"`
+	AdId          uint64                                `json:"ad_id"`
+	StartTime     string                                `json:"start_time"`
+	EndTime       string                                `json:"end_time"`
+	Fields        []string                              `json:"fields,omitempty"`
+	Scene         string                                `json:"scene"`
+	Filtering     *UniPromotionControlTaskListFiltering `json:"filtering,omitempty"`
+	OrderType     string                                `json:"order_type,omitempty"`
+	OrderField    string                                `json:"order_field,omitempty"`
+	Page          int                                   `json:"page,omitempty"`
+	PageSize      int                                   `json:"page_size,omitempty"`
+}
+
+type UniPromotionControlTaskListFiltering struct {
+	SearchKeyword   string `json:"search_keyword,omitempty"`
+	TaskStatus      string `json:"task_status,omitempty"`
+	HavingCost      string `json:"having_cost,omitempty"`
+	CreateStartTime string `json:"create_start_time,omitempty"`
+	CreateEndTime   string `json:"create_end_time,omitempty"`
+	SmartBidType    string `json:"smart_bid_type,omitempty"`
+	ExternalAction  string `json:"external_action,omitempty"`
+}
+
+type UniPromotionControlTask struct {
+	Id                     uint64                            `json:"id"`
+	Name                   string                            `json:"name"`
+	TaskStatus             string                            `json:"task_status"`
+	Budget                 float64                           `json:"budget"`
+	Duration               float64                           `json:"duration"`
+	CreateTime             string                            `json:"create_time"`
+	Bid                    float64                           `json:"bid"`
+	ExternalActionName     string                            `json:"external_action_name"`
+	DeepExternalActionName string                            `json:"deep_external_action_name"`
+	SmartBidType           string                            `json:"smart_bid_type"`
+	Roi2Goal               float64                           `json:"roi2_goal"`
+	MaterialList           []UniPromotionControlTaskMaterial `json:"material_list"`
+	Metrics                map[string]any                    `json:"metrics"`
+}
+
+type UniPromotionControlTaskMaterial struct {
+	MaterialId    uint64 `json:"material_id"`
+	AwemeItemId   uint64 `json:"aweme_item_id"`
+	VideoDuration int64  `json:"video_duration"`
+	Title         string `json:"title"`
+}
+
+type UniPromotionControlTaskListRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		TaskList []UniPromotionControlTask `json:"task_list"`
+		PageInfo PageInfo                  `json:"page_info"`
+	} `json:"data"`
+}
+
 // ===== Common Types =====
 
 type PageInfo struct {
@@ -1827,4 +2040,32 @@ type PageInfo struct {
 	PageSize    int   `json:"page_size"`
 	TotalNumber int64 `json:"total_number"`
 	TotalPage   int   `json:"total_page"`
+}
+
+func (p *PageInfo) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Page        int         `json:"page"`
+		PageSize    int         `json:"page_size"`
+		TotalNumber json.Number `json:"total_number"`
+		TotalNum    json.Number `json:"total_num"`
+		TotalPage   int         `json:"total_page"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.Page = raw.Page
+	p.PageSize = raw.PageSize
+	p.TotalPage = raw.TotalPage
+	p.TotalNumber = 0
+	for _, value := range []json.Number{raw.TotalNumber, raw.TotalNum} {
+		if value == "" {
+			continue
+		}
+		parsed, err := value.Int64()
+		if err == nil {
+			p.TotalNumber = parsed
+			break
+		}
+	}
+	return nil
 }
