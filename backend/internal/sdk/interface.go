@@ -133,6 +133,9 @@ type QianchuanClient interface {
 	UniPromotionAuthInit(ctx context.Context, req UniPromotionAuthInitReq) (*UniPromotionAuthInitRes, error)
 	UniPromotionControlTaskCreate(ctx context.Context, req UniPromotionControlTaskCreateReq) (*UniPromotionControlTaskCreateRes, error)
 	UniPromotionControlTaskList(ctx context.Context, req UniPromotionControlTaskListReq) (*UniPromotionControlTaskListRes, error)
+	UniPromotionControlTaskStatusUpdate(ctx context.Context, req UniPromotionControlTaskStatusUpdateReq) (*UniPromotionControlTaskStatusUpdateRes, error)
+	UniPromotionControlTaskUpdate(ctx context.Context, req UniPromotionControlTaskUpdateReq) (*UniPromotionControlTaskUpdateRes, error)
+	QianchuanImageGet(ctx context.Context, req QianchuanImageGetReq) (*QianchuanImageGetRes, error)
 }
 
 // QianchuanError 统一错误类型

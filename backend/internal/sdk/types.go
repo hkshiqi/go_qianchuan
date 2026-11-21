@@ -1699,7 +1699,7 @@ type UniPromotionOpError struct {
 type UniPromotionBudgetUpdateReq struct {
 	AccessToken  string                         `json:"-"`
 	AdvertiserId uint64                         `json:"advertiser_id"`
-	Data         []UniPromotionBudgetUpdateItem `json:"data"`
+	Data         []UniPromotionBudgetUpdateItem `json:"update_budget_infos"`
 }
 
 type UniPromotionBudgetUpdateItem struct {
@@ -1711,8 +1711,15 @@ type UniPromotionBudgetUpdateRes struct {
 	Code    int64  `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		Results []UniPromotionOpResult `json:"results"`
+		Results []UniPromotionBudgetUpdateResult `json:"results"`
 	} `json:"data"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+type UniPromotionBudgetUpdateResult struct {
+	AdId         uint64 `json:"ad_id"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 type UniPromotionOpResult struct {
@@ -1833,10 +1840,11 @@ type UniPromotionMaterialAddReq struct {
 }
 
 type UniPromotionProductCreativeMaterialAdd struct {
-	ProductID     uint64                      `json:"product_id,omitempty"`
-	AwemeUID      uint64                      `json:"aweme_uid,omitempty"`
-	VideoMaterial []UniPromotionMaterial      `json:"video_material,omitempty"`
-	ImageMaterial []UniPromotionImageMaterial `json:"image_material,omitempty"`
+	ProductID     uint64                                   `json:"product_id,omitempty"`
+	AwemeUID      uint64                                   `json:"aweme_uid,omitempty"`
+	VideoMaterial []UniPromotionMaterial                   `json:"video_material,omitempty"`
+	ImageMaterial []UniPromotionImageMaterial              `json:"image_material,omitempty"`
+	TitleMaterial []UniPromotionMultiCreativeTitleMaterial `json:"title_material,omitempty"`
 }
 
 type UniPromotionImageMaterial struct {
@@ -2021,11 +2029,11 @@ type UniPromotionControlTaskCreateReq struct {
 	Scene          string   `json:"scene"`
 	Budget         float64  `json:"budget"`
 	Duration       float64  `json:"duration,omitempty"`
-	MaterialIds    []uint64 `json:"material_ids"`
-	ExternalAction string   `json:"external_action"`
-	SmartBidType   string   `json:"smart_bid_type"`
-	Bid            float64  `json:"bid"`
-	MaterialType   string   `json:"material_type"`
+	MaterialIds    []uint64 `json:"material_ids,omitempty"`
+	ExternalAction string   `json:"external_action,omitempty"`
+	SmartBidType   string   `json:"smart_bid_type,omitempty"`
+	Bid            float64  `json:"bid,omitempty"`
+	MaterialType   string   `json:"material_type,omitempty"`
 }
 
 type UniPromotionControlTaskCreateRes struct {

@@ -951,7 +951,25 @@ func (t *Tools) setPlanBudget(ctx context.Context, args map[string]any) (any, er
 		return nil, fmt.Errorf("update plan budget failed: %w", err)
 	}
 	if response.Code != 0 {
-		return nil, apiError("更新计划预算失败", response.Code, response.Message)
+		return nil, apiError("更新计划预算失败", response.Code, response.Message, response.RequestID)
+	}
+	var item *sdk.UniPromotionBudgetUpdateResult
+	for index := range response.Data.Results {
+		if response.Data.Results[index].AdId == adID {
+			item = &response.Data.Results[index]
+			break
+		}
+	}
+	if item == nil {
+		return nil, fmt.Errorf("budget update response omitted ad_id %s", formatUintID(adID))
+	}
+	if !strings.EqualFold(item.Status, "SUCCESS") {
+		return nil, fmt.Errorf(
+			"budget update rejected for ad_id %s: status=%s error=%s",
+			formatUintID(item.AdId),
+			item.Status,
+			item.ErrorMessage,
+		)
 	}
 	return map[string]any{"ad_id": formatUintID(adID), "budget": budget, "result": response.Data.Results}, nil
 }

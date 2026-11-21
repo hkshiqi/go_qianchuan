@@ -6,6 +6,7 @@ KEY_FILE="${QIANCHUAN_MCP_KEY_FILE:-/opt/go-qianchuan/tenants/owner.key}"
 ACCOUNT_ID="${QIANCHUAN_ACCOUNT_ID:-1855810750424170}"
 AD_ID="${QIANCHUAN_EXISTING_PRODUCT_PLAN_ID:-}"
 IMAGE_ID="${QIANCHUAN_EXISTING_IMAGE_ID:-}"
+TITLE_TEXT="${QIANCHUAN_EXISTING_TITLE:-红卫羊脂皂五盒装}"
 TEST_BUDGET="${QIANCHUAN_EXISTING_PLAN_TEST_BUDGET:-31}"
 BOOST_BUDGET="${QIANCHUAN_EXISTING_BOOST_BUDGET:-1}"
 
@@ -92,29 +93,36 @@ if plan.get("status") != "DISABLE" or plan.get("opt_status") != "DISABLE":
     )
 if not plan.get("product_infos"):
     raise SystemExit("plan detail does not expose product_infos")
-for creative in plan.get("multi_product_creative_list") or []:
-    if creative.get("image_material"):
-        print("OK existing plan is paused product-card IMAGE plan")
-        break
-else:
-    raise SystemExit("plan detail does not expose image_material; refusing ambiguous target")
+has_image_material = any(
+    creative.get("image_material")
+    for creative in plan.get("multi_product_creative_list") or []
+)
+isolated_overall_test = (
+    plan.get("adlab_scene") == "OVERALL_PROJECT"
+    and str(plan.get("name") or "").startswith("Codex-CRUD-OVERALL-TEST-")
+)
+if not has_image_material and not isolated_overall_test:
+    raise SystemExit(
+        "plan has no image_material and is not an isolated paused overall test plan"
+    )
+print("OK paused product plan is eligible for image operations")
 PY
 
 suffix="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)-$$"
 name="Codex-CRUD-EXISTING-PLAN-TEST-$suffix"
-args="$(python3 - "$ACCOUNT_ID" "$AD_ID" "$name" "$TEST_BUDGET" "$BOOST_BUDGET" "$IMAGE_ID" <<'PY'
+args="$(python3 - "$ACCOUNT_ID" "$AD_ID" "$name" "$TEST_BUDGET" "$BOOST_BUDGET" "$IMAGE_ID" "$TITLE_TEXT" <<'PY'
 import json
 import sys
 
-account_id, ad_id, name, budget, boost_budget, image_id = sys.argv[1:]
+account_id, ad_id, name, budget, boost_budget, image_id, title = sys.argv[1:]
 print(json.dumps({
     "account_id": account_id,
     "ad_id": ad_id,
     "name": name,
     "budget": float(budget),
     "boost_budget": float(boost_budget),
-    "external_action": "AD_CONVERT_TYPE_LIVE_SUCCESSORDER_PAY",
     "add_image_ids": [image_id],
+    "add_titles": [title],
     "confirm": True,
 }, ensure_ascii=False, separators=(",", ":")))
 PY
@@ -131,7 +139,9 @@ required = [
     "update_budget",
     "add_materials",
     "delete_test_added_materials",
+    "enable_isolated_test_plan",
     "create_and_stop_one_click_boost",
+    "restore_plan_status",
 ]
 if actions != required:
     raise SystemExit(f"unexpected operation sequence: {actions}")

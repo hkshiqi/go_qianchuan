@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -3065,40 +3066,69 @@ func (c *OceanengineClient) UniPromotionStatusUpdate(ctx context.Context, req Un
 }
 
 func (c *OceanengineClient) UniPromotionBudgetUpdate(ctx context.Context, req UniPromotionBudgetUpdateReq) (*UniPromotionBudgetUpdateRes, error) {
-	var updateInfos []uniPromotionModel.UpdateBudgetInfo
+	return c.uniPromotionBudgetUpdateAt(
+		ctx,
+		req,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/uni_promotion/ad/budget/update/",
+	)
+}
+
+func (c *OceanengineClient) uniPromotionBudgetUpdateAt(
+	ctx context.Context,
+	req UniPromotionBudgetUpdateReq,
+	endpoint string,
+) (*UniPromotionBudgetUpdateRes, error) {
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
+	}
+	if req.AdvertiserId == 0 || len(req.Data) == 0 || len(req.Data) > 10 {
+		return nil, errors.New("advertiser_id and 1-10 budget updates are required")
+	}
+	updateInfos := make([]map[string]any, 0, len(req.Data))
 	for _, item := range req.Data {
-		updateInfos = append(updateInfos, uniPromotionModel.UpdateBudgetInfo{
-			AdID:   item.AdId,
-			Budget: item.Budget,
+		if item.AdId == 0 || item.Budget <= 0 {
+			return nil, errors.New("each budget update requires a positive ad_id and budget")
+		}
+		updateInfos = append(updateInfos, map[string]any{
+			"ad_id":  item.AdId,
+			"budget": item.Budget,
 		})
 	}
-
-	oeReq := &uniPromotionModel.AdBudgetUpdateRequest{
-		AdvertiserID:      req.AdvertiserId,
-		UpdateBudgetInfos: updateInfos,
-	}
-
-	results, err := uniPromotionAPI.AdBudgetUpdate(ctx, c.client, req.AccessToken, oeReq)
+	body, err := json.Marshal(map[string]any{
+		"advertiser_id":       req.AdvertiserId,
+		"update_budget_infos": updateInfos,
+	})
 	if err != nil {
-		return &UniPromotionBudgetUpdateRes{
-			Code:    500,
-			Message: err.Error(),
-		}, nil
+		return nil, err
 	}
-
-	res := &UniPromotionBudgetUpdateRes{
-		Code:    0,
-		Message: "success",
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, err
 	}
-
-	for _, r := range results {
-		res.Data.Results = append(res.Data.Results, UniPromotionOpResult{
-			AdId:    r.AdID,
-			Success: !r.IsError(),
-		})
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
 	}
-
-	return res, nil
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("budget update HTTP %d: %s", response.StatusCode, string(responseBody))
+	}
+	var result UniPromotionBudgetUpdateRes
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return nil, fmt.Errorf("decode budget update response: %w", err)
+	}
+	return &result, nil
 }
 
 func (c *OceanengineClient) UniPromotionRoiGoalUpdate(ctx context.Context, req UniPromotionRoiGoalUpdateReq) (*UniPromotionRoiGoalUpdateRes, error) {
@@ -3420,32 +3450,7 @@ func (c *OceanengineClient) UniPromotionControlTaskCreate(
 	if err := c.throttle.wait(ctx); err != nil {
 		return nil, err
 	}
-	payload := struct {
-		AdvertiserID   uint64   `json:"advertiser_id"`
-		AdID           uint64   `json:"ad_id"`
-		Name           string   `json:"name,omitempty"`
-		Scene          string   `json:"scene"`
-		Budget         float64  `json:"budget"`
-		Duration       float64  `json:"duration,omitempty"`
-		MaterialIDs    []uint64 `json:"material_ids"`
-		ExternalAction string   `json:"external_action"`
-		SmartBidType   string   `json:"smart_bid_type"`
-		Bid            float64  `json:"bid"`
-		MaterialType   string   `json:"material_type"`
-	}{
-		AdvertiserID:   req.AdvertiserId,
-		AdID:           req.AdId,
-		Name:           req.Name,
-		Scene:          req.Scene,
-		Budget:         req.Budget,
-		Duration:       req.Duration,
-		MaterialIDs:    req.MaterialIds,
-		ExternalAction: req.ExternalAction,
-		SmartBidType:   req.SmartBidType,
-		Bid:            req.Bid,
-		MaterialType:   req.MaterialType,
-	}
-	body, err := json.Marshal(payload)
+	body, err := buildControlTaskCreatePayload(req)
 	if err != nil {
 		return nil, err
 	}
