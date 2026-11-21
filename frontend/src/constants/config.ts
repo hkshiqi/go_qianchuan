@@ -2,13 +2,29 @@
  * API配置
  */
 export const API_CONFIG = {
-  BASE_URL:
-    import.meta.env.VITE_API_BASE_URL ||
-    `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`,
+  BASE_URL: resolveAPIPath(),
   TIMEOUT: 30000, // 30秒
   RETRY_TIMES: 3,
   RETRY_DELAY: 1000, // 1秒
 } as const
+
+function resolveAPIPath(): string {
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim()
+  if (!configured) {
+    return `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`
+  }
+
+  const dedicatedHost =
+    typeof window !== 'undefined' && window.location.hostname === 'qianchuan.hqgzs.top'
+  return dedicatedHost && configured.startsWith('/') ? '/api' : configured
+}
+
+export function oauthRedirectURI(): string {
+  if (typeof window !== 'undefined' && window.location.hostname === 'qianchuan.hqgzs.top') {
+    return `${window.location.origin}/auth/callback`
+  }
+  return import.meta.env.VITE_OAUTH_REDIRECT_URI
+}
 
 /**
  * 存储键名

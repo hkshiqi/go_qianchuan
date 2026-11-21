@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Zap, Shield } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { createOAuthState } from '@/utils/oauthState'
+import { oauthRedirectURI } from '@/constants/config'
 
 export default function Login() {
   const [isVisible, setIsVisible] = useState(false)
@@ -13,7 +14,7 @@ export default function Login() {
   const handleOAuthLogin = () => {
     console.log('🎯 [Login] handleOAuthLogin called')
     const appId = import.meta.env.VITE_OAUTH_APP_ID
-    const redirectUri = import.meta.env.VITE_OAUTH_REDIRECT_URI
+    const redirectUri = oauthRedirectURI()
 
     console.log('📋 [Login] Environment check:', {
       appId: appId,

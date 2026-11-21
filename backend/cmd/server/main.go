@@ -171,33 +171,89 @@ func buildRouter(appID int64, appSecret string, publicPathPrefix string) *gin.En
 	store.Options(sessionOptions())
 	router.Use(sessions.Sessions(envString("SESSION_NAME", "qianchuan_session"), store))
 
+	registerPublicRoutes := func(root *gin.RouterGroup) {
+		root.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "timestamp": time.Now().Unix()}) })
+		root.GET("/healthz", middleware.HealthCheckHandler)
+		root.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
+		root.GET("/version", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-live-operations-mcp"})
+		})
+		root.GET("/oauth/authorize", oauthHandler.AuthorizationURL)
+		root.GET("/auth/callback", oauthHandler.Callback)
+		root.POST("/mcp", gin.WrapH(mcpServer))
+		root.OPTIONS("/mcp", func(c *gin.Context) {
+			c.Header("Allow", "POST, OPTIONS")
+			c.Status(http.StatusNoContent)
+		})
+		root.GET("/metrics", middleware.ExportMetricsHandler)
+		root.Any("/webhook/callback", func(c *gin.Context) {
+			if c.Request.Method == http.MethodGet {
+				webhookHandler.HandleChallenge(c)
+				return
+			}
+			webhookHandler.HandleWebhookEvent(c)
+		})
+	}
+
 	root := router.Group(publicPathPrefix)
-	root.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "timestamp": time.Now().Unix()}) })
-	root.GET("/healthz", middleware.HealthCheckHandler)
-	root.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
-	root.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-live-operations-mcp"})
-	})
-	root.GET("/oauth/authorize", oauthHandler.AuthorizationURL)
-	root.GET("/auth/callback", oauthHandler.Callback)
-	root.POST("/mcp", gin.WrapH(mcpServer))
-	root.OPTIONS("/mcp", func(c *gin.Context) {
-		c.Header("Allow", "POST, OPTIONS")
-		c.Status(http.StatusNoContent)
-	})
-	root.GET("/metrics", middleware.ExportMetricsHandler)
-	root.Any("/webhook/callback", func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet {
-			webhookHandler.HandleChallenge(c)
+	registerPublicRoutes(root)
+	if publicPathPrefix != "" {
+		// A dedicated host proxies root paths here, while the shared host keeps
+		// the established prefix.
+		registerPublicRoutes(&router.RouterGroup)
+	}
+
+	docs.SwaggerInfo.BasePath = publicPathPrefix + "/api"
+	root.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	if publicPathPrefix != "" {
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
+
+	rootAPI := root.Group("/api")
+	registerAPIRoutes(rootAPI, publicPathPrefix, operationsWriteEnabled, qianchuanService,
+		authHandler, accessHandler, advertiserHandler, campaignHandler, adHandler,
+		creativeHandler, fileHandler, reportHandler, liveHandler, toolsHandler,
+		keywordHandler, financeHandler, awemeHandler, uniPromotionHandler, activityHandler)
+	if publicPathPrefix != "" {
+		registerAPIRoutes(router.Group("/api"), "", operationsWriteEnabled, qianchuanService,
+			authHandler, accessHandler, advertiserHandler, campaignHandler, adHandler,
+			creativeHandler, fileHandler, reportHandler, liveHandler, toolsHandler,
+			keywordHandler, financeHandler, awemeHandler, uniPromotionHandler, activityHandler)
+	}
+
+	router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, publicPathPrefix+"/api/") ||
+			(publicPathPrefix != "" && strings.HasPrefix(c.Request.URL.Path, "/api/")) {
+			util.NotFound(c, "接口不存在")
 			return
 		}
-		webhookHandler.HandleWebhookEvent(c)
+		c.String(http.StatusNotFound, "not found")
 	})
 
-	docs.SwaggerInfo.BasePath = "/api"
-	root.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	return router
+}
 
-	api := root.Group("/api")
+func registerAPIRoutes(
+	api *gin.RouterGroup,
+	publicPathPrefix string,
+	operationsWriteEnabled bool,
+	qianchuanService *service.QianchuanService,
+	authHandler *handler.AuthHandler,
+	accessHandler *handler.AccessHandler,
+	advertiserHandler *handler.AdvertiserHandler,
+	campaignHandler *handler.CampaignHandler,
+	adHandler *handler.AdHandler,
+	creativeHandler *handler.CreativeHandler,
+	fileHandler *handler.FileHandler,
+	reportHandler *handler.ReportHandler,
+	liveHandler *handler.LiveHandler,
+	toolsHandler *handler.ToolsHandler,
+	keywordHandler *handler.KeywordHandler,
+	financeHandler *handler.FinanceHandler,
+	awemeHandler *handler.AwemeHandler,
+	uniPromotionHandler *handler.UniPromotionHandler,
+	activityHandler *handler.ActivityHandler,
+) {
 	api.GET("/access/status", accessHandler.Status)
 	api.POST("/access/login", accessHandler.Login)
 	api.POST("/access/logout", accessHandler.Logout)
@@ -316,16 +372,6 @@ func buildRouter(appID int64, appSecret string, publicPathPrefix string) *gin.En
 
 	registerUniPromotionRoutes(protected, uniPromotionHandler)
 	registerUnsupportedRoutes(protected)
-
-	router.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, publicPathPrefix+"/api/") {
-			util.NotFound(c, "接口不存在")
-			return
-		}
-		c.String(http.StatusNotFound, "not found")
-	})
-
-	return router
 }
 
 func normalizePublicPathPrefix(value string) string {

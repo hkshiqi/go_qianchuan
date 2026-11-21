@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
 
 func TestNormalizePublicPathPrefix(t *testing.T) {
 	tests := map[string]string{
@@ -25,5 +31,34 @@ func TestOperationReadOnlyPathsAddsPublicPrefix(t *testing.T) {
 	}
 	if paths[0] != "/qianchuan-app"+input {
 		t.Fatalf("prefixed path = %q", paths[0])
+	}
+}
+
+func TestDedicatedHostUsesRootRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	register := func(group *gin.RouterGroup) {
+		group.GET("/health", func(c *gin.Context) {
+			c.String(http.StatusOK, "ok")
+		})
+		group.GET("/api/access/status", func(c *gin.Context) {
+			c.String(http.StatusOK, "status")
+		})
+	}
+	register(router.Group("/qianchuan-app"))
+	register(&router.RouterGroup)
+
+	for _, path := range []string{
+		"/qianchuan-app/health",
+		"/qianchuan-app/api/access/status",
+		"/health",
+		"/api/access/status",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s returned %d, want 200", path, recorder.Code)
+		}
 	}
 }
