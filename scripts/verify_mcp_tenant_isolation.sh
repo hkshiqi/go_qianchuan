@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:18081}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:18081/qianchuan-app}"
 SERVICE_ROOT="${SERVICE_ROOT:-/opt/go-qianchuan}"
 BACKEND_ROOT="${BACKEND_ROOT:-$SERVICE_ROOT/backend}"
 OWNER_KEY_FILE="${OWNER_KEY_FILE:-$SERVICE_ROOT/tenants/owner.key}"
@@ -58,7 +58,7 @@ expected = {
     "tenant_id": "owner",
     "advertiser_id": "1855810750424170",
     "aweme_id": "63307887035",
-    "live_room_id": "7709635958206991154",
+    "live_room_id": "7710006340290513690",
 }
 for field, want in expected.items():
     got = status.get(field)

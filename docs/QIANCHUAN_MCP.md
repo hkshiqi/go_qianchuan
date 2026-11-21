@@ -4,9 +4,9 @@
 
 ## 部署地址
 
-- 工作台：<https://dkl4ii67.zjz-service.cn/>
-- 健康检查：<https://dkl4ii67.zjz-service.cn/health>
-- 服务端 MCP：`https://dkl4ii67.zjz-service.cn/mcp`
+- 工作台：<https://dkl4ii67.zjz-service.cn/qianchuan-app/>
+- 健康检查：<https://dkl4ii67.zjz-service.cn/qianchuan-app/health>
+- 服务端 MCP：`https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp`
 - 标准 MCP stdio：服务器 `/opt/go-qianchuan/backend/bin/qianchuan-mcp`
 
 ## 只读工具
@@ -30,7 +30,7 @@
 优先使用远程 HTTP MCP：
 
 ```text
-URL: https://dkl4ii67.zjz-service.cn/mcp
+URL: https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp
 Header: Authorization: Bearer <调用人自己的租户 Key>
 ```
 
@@ -45,7 +45,7 @@ Header: Authorization: Bearer <调用人自己的租户 Key>
       "command": "<本机 qianchuan-mcp 路径>",
       "env": {
         "QIANCHUAN_TENANT_KEY": "<调用人自己的租户 Key>",
-        "QIANCHUAN_MCP_BASE_URL": "https://dkl4ii67.zjz-service.cn/mcp"
+        "QIANCHUAN_MCP_BASE_URL": "https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp"
       }
     }
   }
@@ -82,7 +82,7 @@ qianchuan_list_accounts()
 ```text
 advertiser_id=1855810750424170
 aweme_id=63307887035
-live_room_id=7709635958206991154
+live_room_id=7710006340290513690
 ```
 
 授权完成后，Token Manager 会把可刷新凭证用 AES-256-GCM 加密写入该租户独占的 `/opt/go-qianchuan/data/tenants/<tenant>/tokens.json`，目录权限固定为 `700`，文件权限固定为 `600`。文件只保存 nonce 与 ciphertext，不保存明文 access token 或 refresh token。不同租户不会读取或覆盖彼此的凭证文件。
@@ -97,7 +97,7 @@ live_room_id=7709635958206991154
   --name "运营A" \
   --advertiser-id 123456789012345 \
   --aweme-id 63307887035 \
-  --live-room-id 7709635958206991154 \
+  --live-room-id 7710006340290513690 \
   --key-file /opt/go-qianchuan/tenants/operator-a.key
 ```
 
@@ -118,7 +118,7 @@ live_room_id=7709635958206991154
 增加或移除账户：
 
 ```bash
-/opt/go-qianchuan/backend/bin/qianchuan-tenant add-account --id operator-a --advertiser-id 223456789012345 --aweme-id 63307887035 --live-room-id 7709635958206991154
+/opt/go-qianchuan/backend/bin/qianchuan-tenant add-account --id operator-a --advertiser-id 223456789012345 --aweme-id 63307887035 --live-room-id 7710006340290513690
 /opt/go-qianchuan/backend/bin/qianchuan-tenant remove-account --id operator-a --advertiser-id 223456789012345
 ```
 

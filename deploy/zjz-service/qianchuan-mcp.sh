@@ -19,7 +19,7 @@ if [ -z "$api_key" ]; then
 	exit 1
 fi
 
-base_url="${QIANCHUAN_MCP_BASE_URL:-http://127.0.0.1:18081/mcp}"
+base_url="${QIANCHUAN_MCP_BASE_URL:-http://127.0.0.1:18081/qianchuan-app/mcp}"
 
 exec env \
 	QIANCHUAN_TENANT_KEY="$api_key" \

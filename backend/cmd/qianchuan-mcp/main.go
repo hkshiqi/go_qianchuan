@@ -51,7 +51,7 @@ func main() {
 func gatewayFromEnv(getenv func(string) string) (*gateway, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(getenv("QIANCHUAN_MCP_BASE_URL")), "/")
 	if baseURL == "" {
-		baseURL = "http://127.0.0.1:18081/mcp"
+		baseURL = "http://127.0.0.1:18081/qianchuan-app/mcp"
 	}
 	apiKey := strings.TrimSpace(getenv("QIANCHUAN_TENANT_KEY"))
 	if apiKey == "" {

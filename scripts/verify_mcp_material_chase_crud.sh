@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MCP_URL="${QIANCHUAN_MCP_LOCAL_URL:-http://127.0.0.1:18081/mcp}"
+MCP_URL="${QIANCHUAN_MCP_LOCAL_URL:-http://127.0.0.1:18081/qianchuan-app/mcp}"
 KEY_FILE="${QIANCHUAN_MCP_KEY_FILE:-/opt/go-qianchuan/tenants/owner.key}"
 ACCOUNT_ID="${QIANCHUAN_ACCOUNT_ID:-1855810750424170}"
 PARENT_PLAN_ID="${QIANCHUAN_LIVE_PLAN_ID:-1856283025550586}"

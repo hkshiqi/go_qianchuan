@@ -35,7 +35,8 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	port := envString("PORT", "8080")
+	port := envString("PORT", "18081")
+	publicPathPrefix := normalizePublicPathPrefix(envString("PUBLIC_PATH_PREFIX", ""))
 	appID, err := strconv.ParseInt(envString("APP_ID", ""), 10, 64)
 	if err != nil || appID <= 0 {
 		log.Fatal("APP_ID must be a valid positive integer")
@@ -49,7 +50,7 @@ func main() {
 	}
 
 	gin.SetMode(envString("GIN_MODE", gin.ReleaseMode))
-	router := buildRouter(appID, appSecret)
+	router := buildRouter(appID, appSecret, publicPathPrefix)
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -78,7 +79,8 @@ func main() {
 	}
 }
 
-func buildRouter(appID int64, appSecret string) *gin.Engine {
+func buildRouter(appID int64, appSecret string, publicPathPrefix string) *gin.Engine {
+	publicPathPrefix = normalizePublicPathPrefix(publicPathPrefix)
 	client := sdk.NewOceanengineClient(appID, appSecret)
 	client.SetMinRequestInterval(time.Duration(envInt64("QIANCHUAN_MIN_REQUEST_INTERVAL_MS", 250)) * time.Millisecond)
 	qianchuanService := service.NewQianchuanService(client, appID, appSecret)
@@ -107,7 +109,8 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 		log.Fatalf("initialize tenant store: %v", err)
 	}
 	authStates := authstate.New(10 * time.Minute)
-	oauthAuthorizationURL := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn") + "/oauth/authorize"
+	oauthAuthorizationURL := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn") +
+		publicPathPrefix + "/oauth/authorize"
 	tenantFactory, err := mcp.NewTenantFactory(mcp.TenantFactoryOptions{
 		Client:                    client,
 		AppID:                     appID,
@@ -144,7 +147,10 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	oauthHandler := handler.NewOAuthHandler(
 		client,
 		appID,
-		envString("OAUTH_REDIRECT_URI", "https://dkl4ii67.zjz-service.cn/auth/callback"),
+		envString(
+			"OAUTH_REDIRECT_URI",
+			"https://dkl4ii67.zjz-service.cn"+publicPathPrefix+"/auth/callback",
+		),
 		tenants,
 		authStates,
 		tenantFactory,
@@ -165,21 +171,22 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	store.Options(sessionOptions())
 	router.Use(sessions.Sessions(envString("SESSION_NAME", "qianchuan_session"), store))
 
-	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "timestamp": time.Now().Unix()}) })
-	router.GET("/healthz", middleware.HealthCheckHandler)
-	router.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
-	router.GET("/version", func(c *gin.Context) {
+	root := router.Group(publicPathPrefix)
+	root.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "timestamp": time.Now().Unix()}) })
+	root.GET("/healthz", middleware.HealthCheckHandler)
+	root.GET("/ready", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "timestamp": time.Now().Unix()}) })
+	root.GET("/version", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"version": "1.0.0", "service": "qianchuan-live-operations-mcp"})
 	})
-	router.GET("/oauth/authorize", oauthHandler.AuthorizationURL)
-	router.GET("/auth/callback", oauthHandler.Callback)
-	router.POST("/mcp", gin.WrapH(mcpServer))
-	router.OPTIONS("/mcp", func(c *gin.Context) {
+	root.GET("/oauth/authorize", oauthHandler.AuthorizationURL)
+	root.GET("/auth/callback", oauthHandler.Callback)
+	root.POST("/mcp", gin.WrapH(mcpServer))
+	root.OPTIONS("/mcp", func(c *gin.Context) {
 		c.Header("Allow", "POST, OPTIONS")
 		c.Status(http.StatusNoContent)
 	})
-	router.GET("/metrics", middleware.ExportMetricsHandler)
-	router.Any("/webhook/callback", func(c *gin.Context) {
+	root.GET("/metrics", middleware.ExportMetricsHandler)
+	root.Any("/webhook/callback", func(c *gin.Context) {
 		if c.Request.Method == http.MethodGet {
 			webhookHandler.HandleChallenge(c)
 			return
@@ -188,9 +195,9 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	})
 
 	docs.SwaggerInfo.BasePath = "/api"
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	root.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	api := router.Group("/api")
+	api := root.Group("/api")
 	api.GET("/access/status", accessHandler.Status)
 	api.POST("/access/login", accessHandler.Login)
 	api.POST("/access/logout", accessHandler.Logout)
@@ -199,7 +206,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	protected := api.Group("")
 	protected.Use(middleware.AccessRequired(), middleware.AuthRequired(), middleware.AutoRefreshToken(qianchuanService), middleware.CSRFProtection())
 	if !operationsWriteEnabled {
-		protected.Use(middleware.WriteGuard(false, operationReadOnlyPOSTPaths...))
+		protected.Use(middleware.WriteGuard(false, operationReadOnlyPaths(publicPathPrefix)...))
 	}
 
 	protected.GET("/user/info", authHandler.GetUserInfo)
@@ -311,7 +318,7 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	registerUnsupportedRoutes(protected)
 
 	router.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		if strings.HasPrefix(c.Request.URL.Path, publicPathPrefix+"/api/") {
 			util.NotFound(c, "接口不存在")
 			return
 		}
@@ -319,6 +326,14 @@ func buildRouter(appID int64, appSecret string) *gin.Engine {
 	})
 
 	return router
+}
+
+func normalizePublicPathPrefix(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "/" {
+		return ""
+	}
+	return "/" + strings.Trim(value, "/")
 }
 
 func registerUniPromotionRoutes(group *gin.RouterGroup, h *handler.UniPromotionHandler) {
@@ -361,6 +376,14 @@ var operationReadOnlyPOSTPaths = []string{
 	"/api/qianchuan/ad/estimate-effect",
 	"/api/qianchuan/aweme/suggest/bid",
 	"/api/qianchuan/aweme/estimate",
+}
+
+func operationReadOnlyPaths(prefix string) []string {
+	result := make([]string, 0, len(operationReadOnlyPOSTPaths))
+	for _, item := range operationReadOnlyPOSTPaths {
+		result = append(result, prefix+item)
+	}
+	return result
 }
 
 func registerUnsupportedRoutes(group *gin.RouterGroup) {

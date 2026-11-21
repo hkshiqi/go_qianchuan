@@ -2,7 +2,9 @@
  * API配置
  */
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api',
+  BASE_URL:
+    import.meta.env.VITE_API_BASE_URL ||
+    `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`,
   TIMEOUT: 30000, // 30秒
   RETRY_TIMES: 3,
   RETRY_DELAY: 1000, // 1秒

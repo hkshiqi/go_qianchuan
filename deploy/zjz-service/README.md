@@ -2,10 +2,10 @@
 
 ## 当前拓扑
 
-- 公网：`https://dkl4ii67.zjz-service.cn/`
+- 公网工作台：`https://dkl4ii67.zjz-service.cn/qianchuan-app/`
 - Nginx：监听宿主机 `8080`，静态站点为 `/opt/go-qianchuan/frontend/dist`
 - Go 后端：systemd `qianchuan-backend.service`，监听 `127.0.0.1:18081`
-- MCP 公网入口：`https://dkl4ii67.zjz-service.cn/mcp`
+- MCP 公网入口：`https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp`
 - MCP 租户隔离：每个使用人一把独立 Bearer Key，可绑定多个投放账户；调用时用 `account_id` 选择
 - 访问控制：`/access` 页面使用 `APP_ACCESS_USERNAME` 和 `APP_ACCESS_PASSWORD_SHA256`，Session 保存在服务端内存
 - OAuth 回调需要跨站携带访问 Session，因此生产环境使用 `COOKIE_SECURE=true`、`COOKIE_SAME_SITE=none`
@@ -41,7 +41,7 @@ install -d -m 0700 /opt/go-qianchuan/tenants
   --name "运营A" \
   --advertiser-id 1855810750424170 \
   --aweme-id 63307887035 \
-  --live-room-id 7709635958206991154 \
+  --live-room-id 7710006340290513690 \
   --key-file /opt/go-qianchuan/tenants/owner.key
 chmod 600 /opt/go-qianchuan/tenants/owner.key
 ```
@@ -53,17 +53,17 @@ chmod 600 /opt/go-qianchuan/tenants/owner.key
   --id owner \
   --advertiser-id 223456789012345 \
   --aweme-id 63307887035 \
-  --live-room-id 7709635958206991154
+  --live-room-id 7710006340290513690
 ```
 
 多账户客户端先调用 `qianchuan_list_accounts`，随后给账户类工具传选中的 `account_id`。多账户未传会拒绝执行，不会默认第一个账户。OAuth 链接按账户生成，每个账户需分别授权；一次授权只写所选账户的 Token。
 
 ## MCP 客户端
 
-所有使用人共用 `https://dkl4ii67.zjz-service.cn/mcp`，但分别持有自己的 Bearer Key。Key 只配置在各调用人的 MCP 客户端 Secret 或本机环境中，不能放进共享目录或工具参数。
+所有使用人共用 `https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp`，但分别持有自己的 Bearer Key。Key 只配置在各调用人的 MCP 客户端 Secret 或本机环境中，不能放进共享目录或工具参数。
 
 ```text
-URL: https://dkl4ii67.zjz-service.cn/mcp
+URL: https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp
 Header: Authorization: Bearer <调用人自己的租户 Key>
 ```
 

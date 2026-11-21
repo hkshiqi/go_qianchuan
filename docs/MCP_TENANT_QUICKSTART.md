@@ -16,7 +16,7 @@
   "mcpServers": {
     "qianchuan": {
       "type": "http",
-      "url": "https://dkl4ii67.zjz-service.cn/mcp",
+      "url": "https://dkl4ii67.zjz-service.cn/qianchuan-app/mcp",
       "headers": {
         "Authorization": "Bearer <管理员私发给你的个人 Key>"
       }
@@ -48,7 +48,7 @@ sudo -u root /opt/go-qianchuan/backend/bin/qianchuan-tenant create \
   --name "运营A" \
   --advertiser-id 123456789012345 \
   --aweme-id 63307887035 \
-  --live-room-id 7709635958206991154 \
+  --live-room-id 7710006340290513690 \
   --key-file /opt/go-qianchuan/tenants/operator-a.key
 ```
 
@@ -61,7 +61,7 @@ sudo -u root /opt/go-qianchuan/backend/bin/qianchuan-tenant create \
   --id operator-a \
   --advertiser-id 223456789012345 \
   --aweme-id 63307887035 \
-  --live-room-id 7709635958206991154
+  --live-room-id 7710006340290513690
 ```
 
 移除账户：
@@ -79,7 +79,7 @@ sudo -u root /opt/go-qianchuan/backend/bin/qianchuan-tenant create \
   {
     "advertiser_id": 223456789012345,
     "aweme_id": 63307887035,
-    "live_room_id": 7709635958206991154
+    "live_room_id": 7710006340290513690
   }
 ]
 ```

@@ -6,6 +6,7 @@ import viteCompression from 'vite-plugin-compression'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: process.env.VITE_PUBLIC_PATH_PREFIX || '/',
   assetsInclude: ['**/*.node'],
   plugins: [
     react(),
