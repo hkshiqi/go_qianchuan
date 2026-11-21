@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
 	"github.com/CriarBrand/qianchuan-backend/internal/service"
@@ -30,6 +31,7 @@ type Tools struct {
 	authURL                   string
 	tenant                    TenantIdentity
 	accounts                  []tenantstore.AccountBinding
+	accessToken               string
 	authURLBuilder            func(tenantID string) (string, error)
 	tokenStorePath            string
 }
@@ -72,6 +74,8 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 		return t.listAccounts(ctx), nil
 	case "qianchuan_list_plans":
 		return t.listPlans(ctx, args)
+	case "qianchuan_list_product_plans":
+		return t.listProductPlans(ctx, args)
 	case "qianchuan_get_plan":
 		return t.getPlan(ctx, args)
 	case "qianchuan_get_plan_materials":
@@ -94,6 +98,14 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 		return t.createMaterialChase(ctx, args)
 	case "qianchuan_list_control_tasks":
 		return t.listControlTasks(ctx, args)
+	case "qianchuan_list_image_library":
+		return t.listImageLibrary(ctx, args)
+	case "qianchuan_create_test_material_chase":
+		return t.createTestMaterialChase(ctx, args)
+	case "qianchuan_update_test_material_chase":
+		return t.updateTestMaterialChase(ctx, args)
+	case "qianchuan_update_control_task_status":
+		return t.updateControlTaskStatus(ctx, args)
 	case "qianchuan_list_available_products":
 		return t.listAvailableProducts(ctx, args)
 	case "qianchuan_list_overall_awemes":
@@ -104,6 +116,12 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 		return t.renameTestProductPlan(ctx, args)
 	case "qianchuan_delete_test_product_plan":
 		return t.deleteTestProductPlan(ctx, args)
+	case "qianchuan_create_test_product_card_plan":
+		return t.createTestProductCardPlan(ctx, args)
+	case "qianchuan_rename_test_product_card_plan":
+		return t.renameTestProductCardPlan(ctx, args)
+	case "qianchuan_delete_test_product_card_plan":
+		return t.deleteTestProductCardPlan(ctx, args)
 	case "qianchuan_create_test_overall_product_plan":
 		return t.createTestOverallProductPlan(ctx, args)
 	case "qianchuan_rename_test_overall_product_plan":
@@ -166,12 +184,22 @@ func (t *Tools) status(ctx context.Context, args map[string]any) (Status, error)
 		AuthorizationURL:          authorizationURL,
 		Capabilities:              []string{"account", "plans", "materials", "live", "rules"},
 		WriteCapabilities:         []string{"budget", "pause", "material_rotation"},
-		MaterialChaseCapabilities: []string{"create_material_chase", "list_control_tasks"},
+		MaterialChaseCapabilities: []string{
+			"create_material_chase",
+			"list_control_tasks",
+			"create_test_material_chase",
+			"update_test_material_chase",
+			"update_control_task_status",
+		},
 		PlanCRUDTestCapabilities: []string{
 			"list_overall_awemes",
 			"create_test_product_plan",
 			"rename_test_product_plan",
 			"delete_test_product_plan",
+			"list_image_library",
+			"create_test_product_card_plan",
+			"rename_test_product_card_plan",
+			"delete_test_product_card_plan",
 			"create_test_overall_product_plan",
 			"rename_test_overall_product_plan",
 			"delete_test_overall_product_plan",
@@ -318,6 +346,137 @@ func (t *Tools) listPlans(ctx context.Context, args map[string]any) (any, error)
 		"page_info": response.Data.PageInfo,
 		"plans":     list,
 	}, nil
+}
+
+func (t *Tools) listProductPlans(ctx context.Context, args map[string]any) (any, error) {
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().In(shanghaiLocation)
+	startTime := stringArg(args, "start_time", now.Add(-24*time.Hour).Format("2006-01-02 15:04:05"))
+	endTime := stringArg(args, "end_time", now.Format("2006-01-02 15:04:05"))
+	page := positiveIntArg(args, "page", 1)
+	pageSize := clampInt(positiveIntArg(args, "page_size", 100), 1, 100)
+	adlabScene := strings.ToUpper(strings.TrimSpace(stringArg(
+		args,
+		"adlab_scene",
+		string(sdk.AdlabSceneOverall),
+	)))
+	if adlabScene != string(sdk.AdlabSceneOverall) &&
+		adlabScene != string(sdk.AdlabSceneUni) {
+		return nil, errors.New("adlab_scene must be OVERALL_PROJECT or UNI_PROJECT")
+	}
+	status := strings.ToUpper(strings.TrimSpace(stringArg(
+		args,
+		"status",
+		"ALL_INCLUDE_DELETED",
+	)))
+	if status != "ALL" && status != "ALL_INCLUDE_DELETED" {
+		return nil, errors.New("status must be ALL or ALL_INCLUDE_DELETED")
+	}
+	response, err := t.service.Client.UniPromotionList(ctx, sdk.UniPromotionListReq{
+		AccessToken:   token,
+		AdvertiserId:  uint64(advertiserID),
+		StartTime:     startTime,
+		EndTime:       endTime,
+		MarketingGoal: "VIDEO_PROM_GOODS",
+		AdlabScene:    adlabScene,
+		Fields: []string{
+			"stat_cost_for_overall_roi2",
+			"total_pay_order_gmv_for_roi2",
+			"total_pay_order_count_for_roi2",
+			"total_prepay_and_pay_order_roi2",
+		},
+		OrderField: "stat_cost_for_overall_roi2",
+		OrderType:  "DESC",
+		Page:       page,
+		PageSize:   pageSize,
+		Filtering: &sdk.UniPromotionListFiltering{
+			Status: status,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("获取商品全域计划列表失败: %w", err)
+	}
+	if response.Code != 0 {
+		return nil, apiError("获取商品全域计划列表失败", response.Code, response.Message)
+	}
+	occupiedIDs, plans := productPlanOccupancy(response.Data.List)
+	return map[string]any{
+		"account":              t.account(account),
+		"window":               map[string]string{"start_time": startTime, "end_time": endTime},
+		"page_info":            response.Data.PageInfo,
+		"plans":                plans,
+		"occupied_product_ids": occupiedIDs,
+		"adlab_scene":          adlabScene,
+		"status_filter":        status,
+	}, nil
+}
+
+func productPlanOccupancy(plans []sdk.UniPromotion) ([]string, []map[string]any) {
+	occupied := make(map[string]bool)
+	productPlans := make([]map[string]any, 0, len(plans))
+	for _, plan := range plans {
+		productID := formatUintID(plan.ProductId)
+		productName := plan.ProductName
+		cost := plan.StatCost
+		payOrderGMV := plan.PayOrderGMV
+		payOrderCount := plan.PayOrderCount
+		roi := plan.PayOrderROI
+		if cost == 0 {
+			cost = plan.StatsInfo.CostForOverallROI2
+			if cost == 0 {
+				cost = plan.StatsInfo.StatCost
+			}
+		}
+		if payOrderGMV == 0 {
+			payOrderGMV = plan.StatsInfo.PayOrderGMV
+		}
+		if payOrderCount == 0 {
+			payOrderCount = plan.StatsInfo.PayOrderCount
+		}
+		if roi == 0 {
+			roi = plan.StatsInfo.ROI2
+		}
+		if len(plan.ProductInfo) > 0 {
+			if productID == "" {
+				productID = formatUintID(plan.ProductInfo[0].ProductID)
+			}
+			if productName == "" {
+				productName = plan.ProductInfo[0].ProductName
+			}
+		}
+		if productID != "" {
+			occupied[productID] = true
+		}
+		productPlans = append(productPlans, map[string]any{
+			"ad_id":           formatUintID(plan.AdId),
+			"name":            plan.AdName,
+			"status":          plan.Status,
+			"opt_status":      plan.OptStatus,
+			"product_id":      productID,
+			"product_name":    productName,
+			"cost":            cost,
+			"pay_order_count": payOrderCount,
+			"pay_order_gmv":   payOrderGMV,
+			"roi":             roi,
+			"budget":          plan.Budget,
+			"roi2_goal":       plan.Roi2Goal,
+		})
+	}
+	occupiedIDs := make([]string, 0, len(occupied))
+	for productID := range occupied {
+		occupiedIDs = append(occupiedIDs, productID)
+	}
+	sort.Slice(occupiedIDs, func(i, j int) bool {
+		return occupiedIDs[i] > occupiedIDs[j]
+	})
+	return occupiedIDs, productPlans
 }
 
 func (t *Tools) getPlan(ctx context.Context, args map[string]any) (any, error) {
@@ -829,6 +988,21 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 	if err := t.requireMaterialChaseWrite(args); err != nil {
 		return nil, err
 	}
+	return t.createMaterialChaseCore(ctx, args, false)
+}
+
+func (t *Tools) createTestMaterialChase(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	return t.createMaterialChaseCore(ctx, args, true)
+}
+
+func (t *Tools) createMaterialChaseCore(
+	ctx context.Context,
+	args map[string]any,
+	testOnly bool,
+) (any, error) {
 	account, err := t.resolveAccount(args)
 	if err != nil {
 		return nil, err
@@ -857,6 +1031,14 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 	if len(materialIDs) == 0 || len(materialIDs) > 20 {
 		return nil, errors.New("material_ids must contain between 1 and 20 unique IDs")
 	}
+	metricDate, err := materialChaseMetricDate(
+		today(),
+		stringArg(args, "metric_date", ""),
+		testOnly,
+	)
+	if err != nil {
+		return nil, err
+	}
 	planResponse, err := t.service.Client.UniPromotionDetail(ctx, sdk.UniPromotionDetailReq{
 		AccessToken:  token,
 		AdvertiserId: uint64(advertiserID),
@@ -871,40 +1053,35 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 	if planResponse.Data.MarketingGoal != "LIVE_PROM_GOODS" {
 		return nil, fmt.Errorf("parent plan marketing_goal=%q, required LIVE_PROM_GOODS", planResponse.Data.MarketingGoal)
 	}
-	materials, _, err := t.fetchPlanMaterials(ctx, token, advertiserID, adID, today(), today())
+	library, err := t.fetchMaterialLibrary(ctx, token, advertiserID, metricDate, metricDate)
 	if err != nil {
 		return nil, err
 	}
-	protected := make(map[string]bool, 3)
-	for _, item := range protectedTop3(materials) {
-		protected[item.MaterialID] = true
+	var top3 []MaterialMetrics
+	if testOnly {
+		top3 = protectedTop3(library)
+	} else {
+		parentMaterials, _, fetchErr := t.fetchPlanMaterials(
+			ctx,
+			token,
+			advertiserID,
+			adID,
+			metricDate,
+			metricDate,
+		)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		top3 = protectedTop3(parentMaterials)
 	}
-	library, err := t.fetchMaterialLibrary(ctx, token, advertiserID, today(), today())
+	selected, err := selectMaterialChaseMaterials(
+		materialIDs,
+		top3,
+		library,
+		DefaultRuleConfig(),
+	)
 	if err != nil {
 		return nil, err
-	}
-	libraryByID := make(map[string]MaterialMetrics, len(library))
-	for _, item := range library {
-		libraryByID[item.MaterialID] = item
-	}
-	selected := make([]MaterialMetrics, 0, len(materialIDs))
-	for _, id := range materialIDs {
-		if protected[id] {
-			return nil, fmt.Errorf("material %s is protected: top 3 by spend cannot enter the chase task", id)
-		}
-		material, ok := libraryByID[id]
-		if !ok {
-			return nil, fmt.Errorf("material %s is not present in today's official video material report", id)
-		}
-		if !materialThresholdPassed(material, DefaultRuleConfig()) {
-			return nil, fmt.Errorf(
-				"material %s did not meet either threshold: ctr=%.4f%% (min 7%%), conversion_rate=%.4f%% (min 8%%)",
-				id,
-				material.CTR,
-				material.ConversionRate,
-			)
-		}
-		selected = append(selected, material)
 	}
 	now := time.Now().In(shanghaiLocation)
 	startTime, endTime := businessDayRange(now)
@@ -937,6 +1114,16 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 		}
 	}
 	taskName := fmt.Sprintf("20261120_单阈值追投_%s", now.Format("1504"))
+	if testOnly {
+		taskName = stringArg(
+			args,
+			"name",
+			fmt.Sprintf("%s%s-%d", materialChaseCRUDTestPrefix, now.Format("20060102-150405"), now.UnixNano()),
+		)
+		if !validMaterialChaseCRUDTestName(taskName) {
+			return nil, fmt.Errorf("name must start with %s", materialChaseCRUDTestPrefix)
+		}
+	}
 	createResponse, err := t.service.Client.UniPromotionControlTaskCreate(
 		ctx,
 		sdk.UniPromotionControlTaskCreateReq{
@@ -965,13 +1152,37 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 		)
 	}
 	taskID := createResponse.Data.Id
+	pausedImmediately := false
+	if testOnly {
+		pauseResponse, pauseErr := t.service.Client.UniPromotionControlTaskStatusUpdate(
+			ctx,
+			sdk.UniPromotionControlTaskStatusUpdateReq{
+				AccessToken:  token,
+				AdvertiserId: uint64(advertiserID),
+				TaskIds:      []uint64{taskID},
+				OptType:      "PAUSE",
+			},
+		)
+		if pauseErr != nil {
+			return nil, fmt.Errorf("created test material chase %d but immediate pause failed: %w", taskID, pauseErr)
+		}
+		if !controlTaskStatusUpdateSucceeded(pauseResponse, taskID) {
+			return nil, apiError(
+				"pause created test material chase failed",
+				pauseResponse.Code,
+				pauseResponse.Message,
+				pauseResponse.RequestID,
+			)
+		}
+		pausedImmediately = true
+	}
 	var verified *sdk.UniPromotionControlTask
-	for attempt := 0; attempt < 6; attempt++ {
+	for attempt := 0; attempt < 20; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(2 * time.Second):
+			case <-time.After(3 * time.Second):
 			}
 		}
 		listResponse, listErr := t.service.Client.UniPromotionControlTaskList(
@@ -1022,9 +1233,11 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 	verifiedIDs := controlTaskMaterialIDs(verified.MaterialList)
 	if !almostEqual(verified.Budget, budget, 0.000001) ||
 		!almostEqual(verified.Bid, bid, 0.000001) ||
-		!sameStrings(verifiedIDs, materialIDs) {
+		!sameStrings(verifiedIDs, materialIDs) ||
+		(testOnly && !strings.EqualFold(verified.TaskStatus, "DISABLE")) {
 		return map[string]any{
 			"created":            true,
+			"paused_immediately": pausedImmediately,
 			"verified":           false,
 			"task_id":            formatUintID(taskID),
 			"task_name":          taskName,
@@ -1034,11 +1247,13 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 			"actual_bid":         verified.Bid,
 			"expected_materials": materialIDs,
 			"actual_materials":   verifiedIDs,
+			"actual_task_status": verified.TaskStatus,
 			"warning":            "task exists, but server-side verification found a setting mismatch",
 		}, nil
 	}
 	return map[string]any{
 		"created":                  true,
+		"paused_immediately":       pausedImmediately,
 		"verified":                 true,
 		"task_id":                  formatUintID(taskID),
 		"task":                     verified,
@@ -1049,9 +1264,60 @@ func (t *Tools) createMaterialChase(ctx context.Context, args map[string]any) (a
 		"material_count":           len(materialIDs),
 		"material_ids":             materialIDs,
 		"selected_materials":       selected,
-		"protected_top3":           protectedTop3(materials),
+		"protected_top3":           top3,
 		"dual_threshold_materials": dualThresholdMaterials(selected, DefaultRuleConfig()),
 		"source":                   "existing official video material library only",
+	}, nil
+}
+
+func (t *Tools) listImageLibrary(ctx context.Context, args map[string]any) (any, error) {
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	imageMode := stringArg(args, "image_mode", "SQUARE")
+	if imageMode != "SQUARE" {
+		return nil, errors.New("image_mode must be SQUARE for product-card images")
+	}
+	imageIDs, err := optionalStringIDListArg(args, "image_ids")
+	if err != nil {
+		return nil, err
+	}
+	if len(imageIDs) > 100 {
+		return nil, errors.New("image_ids cannot contain more than 100 IDs")
+	}
+	response, err := t.service.Client.QianchuanImageGet(
+		ctx,
+		sdk.QianchuanImageGetReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			ImageMode:    imageMode,
+			ImageIDs:     imageIDs,
+			Page:         positiveIntArg(args, "page", 1),
+			PageSize:     clampInt(positiveIntArg(args, "page_size", 20), 1, 100),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list official image library failed: %w", err)
+	}
+	if response.Code != 0 {
+		return nil, apiError(
+			"list official image library failed",
+			response.Code,
+			response.Message,
+			response.RequestID,
+		)
+	}
+	return map[string]any{
+		"account":    t.account(account),
+		"image_mode": imageMode,
+		"images":     response.Data.List,
+		"page_info":  response.Data.PageInfo,
+		"source":     "official Qianchuan image library",
 	}, nil
 }
 
@@ -1106,6 +1372,323 @@ func (t *Tools) listControlTasks(ctx context.Context, args map[string]any) (any,
 	}, nil
 }
 
+func (t *Tools) readMaterialChaseTestTask(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	parentAdID uint64,
+	taskID uint64,
+	startTime string,
+	endTime string,
+	action string,
+) (*sdk.UniPromotionControlTask, error) {
+	response, err := t.service.Client.UniPromotionControlTaskList(
+		ctx,
+		sdk.UniPromotionControlTaskListReq{
+			AccessToken:   token,
+			AdvertiserId:  uint64(advertiserID),
+			MarketingGoal: "LIVE_PROM_GOODS",
+			AdId:          parentAdID,
+			StartTime:     startTime,
+			EndTime:       endTime,
+			Scene:         "MATERIAL_ADD_BUDGET",
+			Fields:        controlTaskFields(),
+			Filtering: &sdk.UniPromotionControlTaskListFiltering{
+				SearchKeyword: formatUintID(taskID),
+			},
+			Page:     1,
+			PageSize: 100,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read test material chase before %s failed: %w", action, err)
+	}
+	if response.Code != 0 {
+		return nil, apiError(
+			"read test material chase before "+action+" failed",
+			response.Code,
+			response.Message,
+			response.RequestID,
+		)
+	}
+	for index := range response.Data.TaskList {
+		task := &response.Data.TaskList[index]
+		if task.Id != taskID {
+			continue
+		}
+		if !validMaterialChaseCRUDTestName(task.Name) {
+			return nil, fmt.Errorf(
+				"refusing to %s non-test control task: task_id=%s name=%q",
+				action,
+				formatUintID(taskID),
+				task.Name,
+			)
+		}
+		return task, nil
+	}
+	return nil, fmt.Errorf(
+		"%w: test material chase %s was not found in parent plan %s before %s",
+		errMaterialChaseTestTaskNotFound,
+		formatUintID(taskID),
+		formatUintID(parentAdID),
+		action,
+	)
+}
+
+var errMaterialChaseTestTaskNotFound = errors.New("test material chase not found")
+
+func (t *Tools) updateTestMaterialChase(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	parentAdID, err := requiredID(args, "ad_id")
+	if err != nil {
+		return nil, err
+	}
+	taskID, err := requiredID(args, "task_id")
+	if err != nil {
+		return nil, err
+	}
+	newName := stringArg(args, "new_name", "")
+	if !validMaterialChaseCRUDTestName(newName) {
+		return nil, fmt.Errorf("new_name must start with %s", materialChaseCRUDTestPrefix)
+	}
+	budget, ok := floatArg(args, "budget")
+	if !ok || budget <= 0 {
+		return nil, errors.New("budget must be greater than zero")
+	}
+	startTime, endTime := businessDayRange(time.Now().In(shanghaiLocation))
+	before, err := t.readMaterialChaseTestTask(
+		ctx,
+		token,
+		advertiserID,
+		parentAdID,
+		taskID,
+		startTime,
+		endTime,
+		"update",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if before.TaskStatus != "DISABLE" {
+		return nil, fmt.Errorf(
+			"refusing to update test chase %s because task_status=%q, required DISABLE",
+			formatUintID(taskID),
+			before.TaskStatus,
+		)
+	}
+	materialIDs := controlTaskMaterialIDs(before.MaterialList)
+	updateResponse, err := t.service.Client.UniPromotionControlTaskUpdate(
+		ctx,
+		sdk.UniPromotionControlTaskUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			TaskID:       taskID,
+			Name:         newName,
+			Budget:       budget,
+			MaterialIDs:  mustNumericIDs(materialIDs),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update test material chase failed: %w", err)
+	}
+	if updateResponse.Code != 0 {
+		return nil, apiError(
+			"update test material chase failed",
+			updateResponse.Code,
+			updateResponse.Message,
+			updateResponse.RequestID,
+		)
+	}
+	if len(updateResponse.Data.FailedInfos) > 0 {
+		return nil, fmt.Errorf(
+			"update test material chase %s returned failed_infos: %v",
+			formatUintID(taskID),
+			updateResponse.Data.FailedInfos,
+		)
+	}
+	after, err := t.readMaterialChaseTestTask(
+		ctx,
+		token,
+		advertiserID,
+		parentAdID,
+		taskID,
+		startTime,
+		endTime,
+		"verify update",
+	)
+	if err != nil {
+		return nil, err
+	}
+	verified := controlTaskMatches(
+		*after,
+		taskID,
+		newName,
+		budget,
+		before.Bid,
+		materialIDs,
+		"DISABLE",
+	)
+	return map[string]any{
+		"updated":             true,
+		"verified":            verified,
+		"task_id":             formatUintID(taskID),
+		"parent_plan_id":      formatUintID(parentAdID),
+		"old_name":            before.Name,
+		"new_name":            newName,
+		"actual_name":         after.Name,
+		"old_budget":          before.Budget,
+		"budget":              budget,
+		"actual_budget":       after.Budget,
+		"task_status":         after.TaskStatus,
+		"material_ids":        materialIDs,
+		"update_response":     updateResponse.Data,
+		"paused_after_update": after.TaskStatus == "DISABLE",
+	}, nil
+}
+
+func (t *Tools) updateControlTaskStatus(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	parentAdID, err := requiredID(args, "ad_id")
+	if err != nil {
+		return nil, err
+	}
+	taskIDs, err := stringIDListArg(args, "task_ids")
+	if err != nil {
+		return nil, err
+	}
+	taskIDs = uniqueStrings(taskIDs)
+	if len(taskIDs) == 0 || len(taskIDs) > 10 {
+		return nil, errors.New("task_ids must contain between 1 and 10 unique IDs")
+	}
+	optType := strings.ToUpper(stringArg(args, "opt_type", ""))
+	if optType != "PAUSE" && optType != "DELETE" {
+		return nil, errors.New("this guarded test tool only permits PAUSE or DELETE")
+	}
+	numericIDs, err := numericIDList(taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	startTime, endTime := businessDayRange(time.Now().In(shanghaiLocation))
+	for _, numericID := range numericIDs {
+		if _, err := t.readMaterialChaseTestTask(
+			ctx,
+			token,
+			advertiserID,
+			parentAdID,
+			numericID,
+			startTime,
+			endTime,
+			strings.ToLower(optType),
+		); err != nil {
+			if optType == "DELETE" && errors.Is(err, errMaterialChaseTestTaskNotFound) {
+				continue
+			}
+			return nil, err
+		}
+	}
+	response, err := t.service.Client.UniPromotionControlTaskStatusUpdate(
+		ctx,
+		sdk.UniPromotionControlTaskStatusUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			TaskIds:      numericIDs,
+			OptType:      optType,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update control task status failed: %w", err)
+	}
+	if response.Code != 0 {
+		return nil, apiError(
+			"update control task status failed",
+			response.Code,
+			response.Message,
+			response.RequestID,
+		)
+	}
+	if len(response.Data.Errors) > 0 {
+		return nil, fmt.Errorf("control task status update returned errors: %#v", response.Data.Errors)
+	}
+	for _, numericID := range numericIDs {
+		if !controlTaskStatusUpdateSucceeded(response, numericID) {
+			return nil, fmt.Errorf(
+				"official control task status response did not confirm task %s",
+				formatUintID(numericID),
+			)
+		}
+	}
+	expectedStatus := "DISABLE"
+	if optType == "DELETE" {
+		expectedStatus = "DELETED"
+	}
+	readbacks := make(map[string]any, len(taskIDs))
+	allVerified := true
+	for _, numericID := range numericIDs {
+		task, readErr := t.readMaterialChaseTestTask(
+			ctx,
+			token,
+			advertiserID,
+			parentAdID,
+			numericID,
+			startTime,
+			endTime,
+			"verify "+strings.ToLower(optType),
+		)
+		if readErr != nil &&
+			optType == "DELETE" &&
+			errors.Is(readErr, errMaterialChaseTestTaskNotFound) {
+			readbacks[formatUintID(numericID)] = map[string]any{
+				"task_status":   "ABSENT_AFTER_DELETE",
+				"expected":      expectedStatus,
+				"verified":      true,
+				"delete_effect": "absent_from_control_task_list_after_official_delete_success",
+			}
+			continue
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		verified := controlTaskStatusMatches(task.TaskStatus, expectedStatus)
+		if !verified {
+			allVerified = false
+		}
+		readbacks[formatUintID(numericID)] = map[string]any{
+			"task_status": task.TaskStatus,
+			"expected":    expectedStatus,
+			"verified":    verified,
+		}
+	}
+	return map[string]any{
+		"updated":         true,
+		"verified":        allVerified,
+		"opt_type":        optType,
+		"task_ids":        taskIDs,
+		"expected_status": expectedStatus,
+		"readbacks":       readbacks,
+		"response":        response.Data,
+	}, nil
+}
+
 func (t *Tools) listAvailableProducts(ctx context.Context, args map[string]any) (any, error) {
 	account, err := t.resolveAccount(args)
 	if err != nil {
@@ -1117,15 +1700,34 @@ func (t *Tools) listAvailableProducts(ctx context.Context, args map[string]any) 
 	}
 	page := positiveIntArg(args, "page", 1)
 	pageSize := closestProductPageSize(positiveIntArg(args, "page_size", 20))
+	createROI2LimitProduct, _ := args["create_roi2_limit_product"].(bool)
+	overallMarketing, _ := args["is_overall_marketing"].(bool)
+	filterNotDelivery, _ := args["filter_not_delivery_product"].(bool)
+	if filterNotDelivery && !overallMarketing {
+		return nil, errors.New("filter_not_delivery_product requires is_overall_marketing=true")
+	}
+	if overallMarketing && createROI2LimitProduct {
+		return nil, errors.New(
+			"create_roi2_limit_product cannot be combined with is_overall_marketing=true; " +
+				"the official product-overall scene rejects this filter, so exercise candidate rotation on creation instead",
+		)
+	}
+	awemeID := uint64(account.AwemeID)
+	if overallMarketing {
+		awemeID = 0
+	}
 	response, err := t.service.Client.UniPromotionProductAvailableGet(
 		ctx,
 		sdk.UniPromotionProductAvailableGetReq{
-			AccessToken:  token,
-			AdvertiserId: uint64(advertiserID),
-			AwemeId:      uint64(account.AwemeID),
-			Page:         page,
-			PageSize:     pageSize,
-			ProductName:  stringArg(args, "product_name", ""),
+			AccessToken:            token,
+			AdvertiserId:           uint64(advertiserID),
+			AwemeId:                awemeID,
+			Page:                   page,
+			PageSize:               pageSize,
+			ProductName:            stringArg(args, "product_name", ""),
+			CreateROI2LimitProduct: createROI2LimitProduct,
+			OverallMarketing:       overallMarketing,
+			FilterNotDelivery:      filterNotDelivery,
 		},
 	)
 	if err != nil {
@@ -1225,6 +1827,8 @@ func (t *Tools) listOverallAwemes(ctx context.Context, args map[string]any) (any
 
 const planCRUDTestPrefix = "Codex-CRUD-TEST-"
 const overallPlanCRUDTestPrefix = "Codex-CRUD-OVERALL-TEST-"
+const productCardCRUDTestPrefix = "Codex-CRUD-PRODUCT-CARD-TEST-"
+const materialChaseCRUDTestPrefix = "Codex-CRUD-CHASE-TEST-"
 
 func (t *Tools) createTestProductPlan(ctx context.Context, args map[string]any) (any, error) {
 	if err := t.requirePlanCRUDTestWrite(args); err != nil {
@@ -1515,6 +2119,730 @@ func (t *Tools) deleteTestProductPlan(ctx context.Context, args map[string]any) 
 	result["verified"] = verified
 	result["verify_evidence"] = evidence
 	return result, nil
+}
+
+func (t *Tools) createTestProductCardPlan(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	name := stringArg(args, "name", "")
+	if !validProductCardCRUDTestName(name) {
+		return nil, fmt.Errorf("name must start with %s", productCardCRUDTestPrefix)
+	}
+	productID, err := requiredID(args, "product_id")
+	if err != nil {
+		return nil, err
+	}
+	imageID := strings.TrimSpace(stringArg(args, "image_id", ""))
+	if err := validateProductCardImageInput(imageID); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(stringArg(args, "title", ""))
+	if utf8.RuneCountInString(title) < 10 {
+		return nil, errors.New("title must contain at least 10 characters")
+	}
+	sellingPoints, err := stringListArg(args, "selling_points")
+	if err != nil {
+		return nil, err
+	}
+	if len(sellingPoints) > 3 {
+		return nil, errors.New("selling_points cannot contain more than 3 values")
+	}
+	for _, sellingPoint := range sellingPoints {
+		width := productCardDisplayWidth(sellingPoint)
+		if width < 11 || width > 18 {
+			return nil, fmt.Errorf(
+				"selling point %q has %d display characters; required 11-18",
+				sellingPoint,
+				width,
+			)
+		}
+	}
+	budget, ok := floatArg(args, "budget")
+	if !ok || budget < 30 || budget > 1_000_000 {
+		return nil, errors.New("budget must be between 30 and 1000000 CNY for CRUD testing")
+	}
+	startDate, endDate, err := planCRUDTestDates(args)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.verifyTestProduct(ctx, token, advertiserID, account.AwemeID, productID); err != nil {
+		return nil, err
+	}
+	if err := t.verifySquareImage(ctx, token, advertiserID, imageID); err != nil {
+		return nil, err
+	}
+	awemeID, err := t.productCardTestAwemeID(
+		ctx,
+		token,
+		advertiserID,
+		account.AwemeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	createResponse, err := t.service.Client.UniPromotionProductPlanCreate(
+		ctx,
+		sdk.UniPromotionProductPlanCreateReq{
+			AccessToken:        token,
+			AdvertiserId:       uint64(advertiserID),
+			Name:               name,
+			AwemeId:            awemeID,
+			ProductId:          productID,
+			Budget:             budget,
+			StartDate:          startDate,
+			EndDate:            endDate,
+			DeepExternalAction: "AD_CONVERT_TYPE_LIVE_PURE_PAY_ROI",
+			ProductCard:        true,
+			ProductImage:       imageID,
+			ProductTitle:       title,
+			SellingPoints:      sellingPoints,
+			PromotionCardImage: imageID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create test product-card plan failed: %w", err)
+	}
+	if createResponse.Code != 0 || createResponse.Data.AdId == 0 {
+		return nil, apiError(
+			"create test product-card plan failed",
+			createResponse.Code,
+			createResponse.Message,
+			createResponse.RequestID,
+		)
+	}
+	adID := createResponse.Data.AdId
+	pauseResponse, pauseErr := t.service.Client.UniPromotionStatusUpdate(
+		ctx,
+		sdk.UniPromotionStatusUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			AdIds:        []uint64{adID},
+			OptStatus:    "DISABLE",
+		},
+	)
+	if pauseErr != nil {
+		return nil, fmt.Errorf("created test product-card plan %d but immediate pause failed: %w", adID, pauseErr)
+	}
+	if !uniPromotionStatusUpdateSucceeded(pauseResponse, adID) {
+		return nil, apiError(
+			"pause created test product-card plan failed",
+			pauseResponse.Code,
+			pauseResponse.Message,
+			pauseResponse.RequestID,
+		)
+	}
+	plan, err := t.readProductCardTestPlan(ctx, token, advertiserID, adID, "verify creation")
+	if err != nil {
+		return nil, err
+	}
+	verified, evidence := productCardTestPlanIdentity(
+		plan,
+		productID,
+		imageID,
+		title,
+		sellingPoints,
+	)
+	return map[string]any{
+		"created":            true,
+		"paused_immediately": true,
+		"verified":           verified && plan.Status == "DISABLE" && plan.OptStatus == "DISABLE",
+		"ad_id":              formatUintID(adID),
+		"name":               name,
+		"marketing_goal":     "VIDEO_PROM_GOODS",
+		"plan_type":          "PURE_PRODUCT_CARD",
+		"product_id":         formatUintID(productID),
+		"aweme_id":           formatUintID(awemeID),
+		"image_id":           imageID,
+		"title":              title,
+		"selling_points":     sellingPoints,
+		"budget":             budget,
+		"start_date":         startDate,
+		"end_date":           endDate,
+		"creative_evidence":  evidence,
+		"plan":               plan,
+		"account":            t.account(account),
+	}, nil
+}
+
+func (t *Tools) renameTestProductCardPlan(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	adID, err := requiredID(args, "ad_id")
+	if err != nil {
+		return nil, err
+	}
+	newName := stringArg(args, "new_name", "")
+	if !validProductCardCRUDTestName(newName) {
+		return nil, fmt.Errorf("new_name must start with %s", productCardCRUDTestPrefix)
+	}
+	before, err := t.readProductCardTestPlan(ctx, token, advertiserID, adID, "rename")
+	if err != nil {
+		return nil, err
+	}
+	updateResponse, err := t.service.Client.UniPromotionNameUpdate(
+		ctx,
+		sdk.UniPromotionNameUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			AdId:         adID,
+			Name:         newName,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rename test product-card plan failed: %w", err)
+	}
+	if updateResponse.Code != 0 {
+		return nil, apiError(
+			"rename test product-card plan failed",
+			updateResponse.Code,
+			updateResponse.Message,
+			updateResponse.RequestID,
+		)
+	}
+	after, err := t.readProductCardTestPlan(ctx, token, advertiserID, adID, "verify rename")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"renamed":     true,
+		"verified":    after.Name == newName && after.Status == "DISABLE" && after.OptStatus == "DISABLE",
+		"ad_id":       formatUintID(adID),
+		"old_name":    before.Name,
+		"new_name":    newName,
+		"actual_name": after.Name,
+		"status":      after.Status,
+		"opt_status":  after.OptStatus,
+		"plan":        after,
+	}, nil
+}
+
+func (t *Tools) deleteTestProductCardPlan(ctx context.Context, args map[string]any) (any, error) {
+	if err := t.requirePlanCRUDTestWrite(args); err != nil {
+		return nil, err
+	}
+	account, err := t.resolveAccount(args)
+	if err != nil {
+		return nil, err
+	}
+	token, advertiserID, err := t.tokenFor(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	adID, err := requiredID(args, "ad_id")
+	if err != nil {
+		return nil, err
+	}
+	before, err := t.readProductCardTestPlan(ctx, token, advertiserID, adID, "delete")
+	if err != nil {
+		return nil, err
+	}
+	pauseResponse, err := t.service.Client.UniPromotionStatusUpdate(
+		ctx,
+		sdk.UniPromotionStatusUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			AdIds:        []uint64{adID},
+			OptStatus:    "DISABLE",
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pause product-card test plan before delete failed: %w", err)
+	}
+	if !uniPromotionStatusUpdateSucceeded(pauseResponse, adID) {
+		return nil, apiError(
+			"pause product-card test plan before delete failed",
+			pauseResponse.Code,
+			pauseResponse.Message,
+			pauseResponse.RequestID,
+		)
+	}
+	deleteResponse, err := t.service.Client.UniPromotionStatusUpdate(
+		ctx,
+		sdk.UniPromotionStatusUpdateReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			AdIds:        []uint64{adID},
+			OptStatus:    "DELETE",
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("delete product-card test plan failed: %w", err)
+	}
+	if !uniPromotionStatusUpdateSucceeded(deleteResponse, adID) {
+		return nil, apiError(
+			"delete product-card test plan failed",
+			deleteResponse.Code,
+			deleteResponse.Message,
+			deleteResponse.RequestID,
+		)
+	}
+	verified, evidence := t.verifyDeletedPlan(ctx, token, advertiserID, adID)
+	return map[string]any{
+		"deleted":         true,
+		"verified":        verified,
+		"ad_id":           formatUintID(adID),
+		"name":            before.Name,
+		"plan_type":       "PURE_PRODUCT_CARD",
+		"delete_result":   deleteResponse.Data,
+		"verify_evidence": evidence,
+	}, nil
+}
+
+func (t *Tools) verifySquareImage(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	imageID string,
+) error {
+	response, err := t.service.Client.QianchuanImageGet(
+		ctx,
+		sdk.QianchuanImageGetReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			ImageMode:    "SQUARE",
+			ImageIDs:     []string{imageID},
+			Page:         1,
+			PageSize:     100,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("verify product-card image failed: %w", err)
+	}
+	if response.Code != 0 {
+		return apiError(
+			"verify product-card image failed",
+			response.Code,
+			response.Message,
+			response.RequestID,
+		)
+	}
+	for _, image := range response.Data.List {
+		if productCardImageMatches(imageID, image) {
+			return nil
+		}
+	}
+	return fmt.Errorf("image_id %s is not present in the official SQUARE image library", imageID)
+}
+
+func validateProductCardImageInput(imageID string) error {
+	if strings.TrimSpace(imageID) == "" {
+		return errors.New("image_id is required")
+	}
+	return nil
+}
+
+func (t *Tools) productCardTestAwemeID(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	configuredAwemeID int64,
+) (uint64, error) {
+	for page := 1; page <= 100; page++ {
+		response, err := t.service.Client.OverallAwemeList(
+			ctx,
+			sdk.OverallAwemeListReq{
+				AccessToken:  token,
+				AdvertiserId: uint64(advertiserID),
+				Page:         page,
+				PageSize:     30,
+			},
+		)
+		if err != nil {
+			return 0, fmt.Errorf("resolve product-card test aweme failed: %w", err)
+		}
+		if response.Code != 0 {
+			return 0, apiError(
+				"resolve product-card test aweme failed",
+				response.Code,
+				response.Message,
+				response.RequestID,
+			)
+		}
+		for _, item := range response.Data.BindAwemeUserInfos {
+			aweme := item.AwemeUserInfo
+			if aweme.AwemeID != 0 &&
+				(aweme.AwemeID == uint64(configuredAwemeID) ||
+					aweme.AwemeShowID == strconv.FormatInt(configuredAwemeID, 10)) {
+				return aweme.AwemeID, nil
+			}
+		}
+		if page >= response.Data.Pagination.TotalPage {
+			break
+		}
+	}
+	return 0, fmt.Errorf(
+		"configured product-card aweme %d is not present in the official overall-aweme list",
+		configuredAwemeID,
+	)
+}
+
+func productCardImageMatches(imageID string, image sdk.QianchuanImage) bool {
+	return strings.TrimSpace(image.ID) == strings.TrimSpace(imageID) &&
+		strings.EqualFold(strings.TrimSpace(image.ImageMode), "SQUARE")
+}
+
+func (t *Tools) readProductCardTestPlan(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	adID uint64,
+	action string,
+) (*sdk.UniPromotionDetail, error) {
+	var lastErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(3 * time.Second):
+			}
+		}
+		response, err := t.service.Client.UniPromotionDetail(
+			ctx,
+			sdk.UniPromotionDetailReq{
+				AccessToken:  token,
+				AdvertiserId: uint64(advertiserID),
+				AdId:         adID,
+			},
+		)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if response.Code != 0 || response.Data == nil {
+			lastErr = apiError(
+				"read product-card test plan before "+action+" failed",
+				response.Code,
+				response.Message,
+				response.RequestID,
+			)
+			continue
+		}
+		if !productCardTestIdentityValid(response.Data) {
+			return nil, fmt.Errorf(
+				"refusing to %s non-product-card test plan: ad_id=%s marketing_goal=%q name=%q",
+				action,
+				formatUintID(adID),
+				response.Data.MarketingGoal,
+				response.Data.Name,
+			)
+		}
+		if !strings.EqualFold(response.Data.Status, "DISABLE") ||
+			!strings.EqualFold(response.Data.OptStatus, "DISABLE") {
+			lastErr = fmt.Errorf(
+				"product-card test plan %s is not paused: status=%q opt_status=%q",
+				formatUintID(adID),
+				response.Data.Status,
+				response.Data.OptStatus,
+			)
+			continue
+		}
+		return response.Data, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("empty plan detail")
+	}
+	return nil, fmt.Errorf("read product-card test plan before %s failed: %w", action, lastErr)
+}
+
+func productCardTestIdentityValid(plan *sdk.UniPromotionDetail) bool {
+	return plan != nil &&
+		plan.MarketingGoal == "VIDEO_PROM_GOODS" &&
+		validProductCardCRUDTestName(plan.Name) &&
+		productCardPromotionTitleHasProductName(plan) &&
+		productCardStructureValid(plan, 0, "", "") &&
+		len(plan.MultiProductCreativeList) == 1 &&
+		creativeCardSellingPointsMatch(
+			plan.MultiProductCreativeList[0].CreativeCard,
+			nil,
+		)
+}
+
+func productCardPromotionTitleHasProductName(plan *sdk.UniPromotionDetail) bool {
+	if plan == nil || len(plan.MultiProductCreativeList) != 1 {
+		return false
+	}
+	creative := plan.MultiProductCreativeList[0]
+	card := creative.CreativeCard
+	if card == nil || strings.TrimSpace(card.PromotionCardTitle) == "" {
+		return false
+	}
+	if len(creative.TitleMaterial) != 1 {
+		return false
+	}
+	title := creative.TitleMaterial[0]
+	return title.TitleType == "COMMODITY_CARD" &&
+		strings.TrimSpace(title.Title) != "" &&
+		title.Title == card.PromotionCardTitle
+}
+
+func productCardTestPlanIdentity(
+	plan *sdk.UniPromotionDetail,
+	expectedProductID uint64,
+	expectedImageID string,
+	expectedTitle string,
+	expectedSellingPoints []string,
+) (bool, map[string]any) {
+	evidence := map[string]any{
+		"expected_product_id":     formatUintID(expectedProductID),
+		"expected_image_id":       expectedImageID,
+		"expected_title":          expectedTitle,
+		"expected_selling_points": expectedSellingPoints,
+	}
+	if plan == nil {
+		evidence["error"] = "empty plan detail"
+		return false, evidence
+	}
+	productID := uint64(0)
+	for _, product := range plan.ProductInfos {
+		if product.ProductID != 0 {
+			productID = product.ProductID
+			break
+		}
+	}
+	evidence["product_id"] = formatUintID(productID)
+	evidence["creative_count"] = len(plan.MultiProductCreativeList)
+	if productID != expectedProductID || len(plan.MultiProductCreativeList) != 1 {
+		evidence["error"] = "product or creative count mismatch"
+		return false, evidence
+	}
+	creative := plan.MultiProductCreativeList[0]
+	evidence["creative_product_id"] = formatUintID(creative.ProductID)
+	evidence["creative_type"] = creative.CreativeType
+	evidence["video_material_count"] = len(creative.VideoMaterial)
+	evidence["carousel_material_count"] = len(creative.CarouselMaterial)
+	squareFound := false
+	for _, image := range creative.ImageMaterial {
+		if image.ImageMode != "SQUARE" {
+			continue
+		}
+		for _, imageID := range image.ImageIDs {
+			if imageID == expectedImageID {
+				squareFound = true
+			}
+		}
+	}
+	commodityTitleFound := false
+	for _, title := range creative.TitleMaterial {
+		if title.TitleType == "COMMODITY_CARD" && title.Title == expectedTitle {
+			commodityTitleFound = true
+		}
+	}
+	evidence["square_image_found"] = squareFound
+	evidence["commodity_card_title_found"] = commodityTitleFound
+	if creative.CreativeCard != nil {
+		evidence["promotion_card_title"] = creative.CreativeCard.PromotionCardTitle
+		evidence["promotion_card_selling_points"] = creative.CreativeCard.PromotionCardSellingPoints
+		evidence["selling_points_found"] = sameStrings(
+			creative.CreativeCard.PromotionCardSellingPoints,
+			expectedSellingPoints,
+		)
+	} else {
+		evidence["selling_points_found"] = false
+	}
+	evidence["hide_in_aweme"] = creative.HideInAweme
+	evidence["status"] = plan.Status
+	evidence["opt_status"] = plan.OptStatus
+	verified := productCardStructureValid(
+		plan,
+		expectedProductID,
+		expectedImageID,
+		expectedTitle,
+	) && creativeCardSellingPointsMatch(
+		creative.CreativeCard,
+		expectedSellingPoints,
+	)
+	return verified, evidence
+}
+
+func creativeCardSellingPointsMatch(card *sdk.UniPromotionCreativeCard, expected []string) bool {
+	if card == nil || len(card.PromotionCardSellingPoints) == 0 {
+		return false
+	}
+	if len(expected) == 0 {
+		return true
+	}
+	return sameStrings(card.PromotionCardSellingPoints, expected)
+}
+
+func creativeCardImageMatches(card *sdk.UniPromotionCreativeCard, expected string) bool {
+	return card != nil &&
+		strings.TrimSpace(card.PromotionCardImageID) != "" &&
+		(expected == "" || card.PromotionCardImageID == expected)
+}
+
+func productCardDisplayWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		if r > 0x7f {
+			width += 2
+		} else {
+			width++
+		}
+	}
+	return width
+}
+
+func productCardStructureValid(
+	plan *sdk.UniPromotionDetail,
+	expectedProductID uint64,
+	expectedImageID string,
+	expectedTitle string,
+) bool {
+	if plan == nil ||
+		plan.MarketingGoal != "VIDEO_PROM_GOODS" ||
+		len(plan.ProductInfos) == 0 ||
+		len(plan.MultiProductCreativeList) != 1 {
+		return false
+	}
+	productID := uint64(0)
+	for _, product := range plan.ProductInfos {
+		if product.ProductID != 0 {
+			productID = product.ProductID
+			break
+		}
+	}
+	if productID == 0 {
+		return false
+	}
+	if expectedProductID != 0 && productID != expectedProductID {
+		return false
+	}
+	creative := plan.MultiProductCreativeList[0]
+	if creative.ProductID != productID ||
+		creative.CreativeType != "PROGRAMMATIC_CREATIVE" ||
+		len(creative.VideoMaterial) != 0 ||
+		len(creative.CarouselMaterial) != 0 ||
+		len(creative.BlockMaterial) != 0 ||
+		len(creative.ImageMaterial) != 1 ||
+		len(creative.TitleMaterial) != 1 {
+		return false
+	}
+	image := creative.ImageMaterial[0]
+	if image.ImageMode != "SQUARE" || len(image.ImageIDs) != 1 || image.ImageIDs[0] == "" {
+		return false
+	}
+	if expectedImageID != "" && image.ImageIDs[0] != expectedImageID {
+		return false
+	}
+	title := creative.TitleMaterial[0]
+	if title.TitleType != "COMMODITY_CARD" || strings.TrimSpace(title.Title) == "" {
+		return false
+	}
+	return (expectedTitle == "" || title.Title == expectedTitle) &&
+		(expectedTitle == "" || creative.CreativeCard.PromotionCardTitle == expectedTitle) &&
+		creativeCardImageMatches(creative.CreativeCard, expectedImageID)
+}
+
+func selectMaterialChaseMaterials(
+	materialIDs []string,
+	top3 []MaterialMetrics,
+	library []MaterialMetrics,
+	config RuleConfig,
+) ([]MaterialMetrics, error) {
+	if len(top3) != config.ProtectedTopN {
+		return nil, fmt.Errorf(
+			"parent plan must have exactly %d spend-ranked materials before a chase can be created; found %d",
+			config.ProtectedTopN,
+			len(top3),
+		)
+	}
+	if len(materialIDs) == 0 || len(uniqueStrings(materialIDs)) != len(materialIDs) {
+		return nil, errors.New("material_ids must be unique and non-empty")
+	}
+	protected := make(map[string]bool, len(top3))
+	provided := make(map[string]bool, len(materialIDs))
+	for _, item := range top3 {
+		protected[item.MaterialID] = true
+	}
+	for _, id := range materialIDs {
+		provided[id] = true
+	}
+	for _, item := range top3 {
+		if !provided[item.MaterialID] {
+			return nil, fmt.Errorf(
+				"material_ids must include protected spend rank %d material %s",
+				item.CostRank,
+				item.MaterialID,
+			)
+		}
+	}
+	libraryByID := make(map[string]MaterialMetrics, len(library))
+	for _, item := range library {
+		libraryByID[item.MaterialID] = item
+	}
+	selected := make([]MaterialMetrics, 0, len(materialIDs))
+	for _, id := range materialIDs {
+		material, ok := libraryByID[id]
+		if !ok {
+			for _, item := range top3 {
+				if item.MaterialID == id {
+					material = item
+					ok = true
+					break
+				}
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf(
+				"material %s is not present in today's official video material report",
+				id,
+			)
+		}
+		if !protected[id] && !materialThresholdPassed(material, config) {
+			return nil, fmt.Errorf(
+				"non-protected material %s did not meet either threshold: ctr=%.4f%% (min 7%%), conversion_rate=%.4f%% (min 8%%)",
+				id,
+				material.CTR,
+				material.ConversionRate,
+			)
+		}
+		selected = append(selected, material)
+	}
+	return selected, nil
+}
+
+func materialChaseMetricDate(defaultDate string, requested string, testOnly bool) (string, error) {
+	if testOnly && strings.TrimSpace(requested) != "" {
+		defaultDate = strings.TrimSpace(requested)
+	}
+	if err := validateMetricDate(defaultDate); err != nil {
+		return "", err
+	}
+	return defaultDate, nil
+}
+
+func validateMetricDate(date string) error {
+	parsed, err := time.ParseInLocation("2006-01-02", date, shanghaiLocation)
+	if err != nil {
+		return errors.New("metric_date must use YYYY-MM-DD")
+	}
+	todayParsed, err := time.ParseInLocation("2006-01-02", today(), shanghaiLocation)
+	if err != nil {
+		return err
+	}
+	if parsed.After(todayParsed) {
+		return errors.New("metric_date cannot be later than today")
+	}
+	return nil
 }
 
 func (t *Tools) createTestOverallProductPlan(ctx context.Context, args map[string]any) (any, error) {
@@ -2040,6 +3368,16 @@ func validOverallPlanCRUDTestName(name string) bool {
 		len(strings.TrimSpace(name)) > len(overallPlanCRUDTestPrefix)
 }
 
+func validProductCardCRUDTestName(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), productCardCRUDTestPrefix) &&
+		len(strings.TrimSpace(name)) > len(productCardCRUDTestPrefix)
+}
+
+func validMaterialChaseCRUDTestName(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), materialChaseCRUDTestPrefix) &&
+		len(strings.TrimSpace(name)) > len(materialChaseCRUDTestPrefix)
+}
+
 func testPlanIdentityValid(plan *sdk.UniPromotionDetail) bool {
 	return plan != nil &&
 		plan.MarketingGoal == "VIDEO_PROM_GOODS" &&
@@ -2106,6 +3444,47 @@ func uniPromotionStatusUpdateSucceeded(response *sdk.UniPromotionStatusUpdateRes
 	return false
 }
 
+func controlTaskStatusUpdateSucceeded(
+	response *sdk.UniPromotionControlTaskStatusUpdateRes,
+	taskID uint64,
+) bool {
+	if response == nil || response.Code != 0 {
+		return false
+	}
+	for _, updatedID := range response.Data.TaskIds {
+		if updatedID == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+func controlTaskMatches(
+	task sdk.UniPromotionControlTask,
+	taskID uint64,
+	name string,
+	budget float64,
+	bid float64,
+	materialIDs []string,
+	status string,
+) bool {
+	return task.Id == taskID &&
+		task.Name == name &&
+		almostEqual(task.Budget, budget, 0.000001) &&
+		almostEqual(task.Bid, bid, 0.000001) &&
+		sameIDSet(task.MaterialList, materialIDs) &&
+		(status == "" || strings.EqualFold(task.TaskStatus, status))
+}
+
+func controlTaskStatusMatches(actual string, expected string) bool {
+	actual = strings.ToUpper(strings.TrimSpace(actual))
+	expected = strings.ToUpper(strings.TrimSpace(expected))
+	if expected == "DELETED" {
+		return actual == "DELETED" || actual == "DELETE"
+	}
+	return actual == expected
+}
+
 func closestProductPageSize(requested int) int {
 	for _, size := range []int{10, 20, 30} {
 		if requested <= size {
@@ -2149,6 +3528,13 @@ func (t *Tools) requirePlanCRUDTestWrite(args map[string]any) error {
 }
 
 func (t *Tools) tokenFor(ctx context.Context, account tenantstore.AccountBinding) (string, int64, error) {
+	if strings.TrimSpace(t.accessToken) != "" {
+		advertiserID := account.AdvertiserID
+		if advertiserID <= 0 {
+			advertiserID = t.service.DefaultAdvertiserID
+		}
+		return t.accessToken, advertiserID, nil
+	}
 	if t.service.TokenManager == nil {
 		return "", 0, errors.New("token manager is not initialized")
 	}
