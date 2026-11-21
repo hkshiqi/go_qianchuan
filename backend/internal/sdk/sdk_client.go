@@ -2868,6 +2868,11 @@ func (c *OceanengineClient) UniPromotionDetail(ctx context.Context, req UniPromo
 }
 
 func decodeUniPromotionDetail(body []byte) (*UniPromotionDetailRes, error) {
+	if normalized, changed, err := normalizeUniPromotionCreativeCards(body); err != nil {
+		return nil, err
+	} else if changed {
+		body = normalized
+	}
 	var result UniPromotionDetailRes
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("decode uni promotion detail: %w", err)
@@ -2921,6 +2926,75 @@ func decodeUniPromotionDetail(body []byte) (*UniPromotionDetailRes, error) {
 	detail.CreateTime = plan.CreateTime
 	detail.ModifyTime = plan.ModifyTime
 	return &result, nil
+}
+
+func normalizeUniPromotionCreativeCards(body []byte) ([]byte, bool, error) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, false, fmt.Errorf("decode uni promotion detail envelope: %w", err)
+	}
+	data, ok := root["data"].(map[string]any)
+	if !ok {
+		return body, false, nil
+	}
+	creatives, ok := data["multi_product_creative_list"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+	changed := false
+	for _, raw := range creatives {
+		creative, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		card, _ := creative["creative_card"].(map[string]any)
+		if len(card) > 0 {
+			continue
+		}
+		source := card
+		if len(source) == 0 {
+			source = creative
+		}
+		imageID := firstNonEmptyText(source["promotion_card_image_id"], source["product_image_id"])
+		title := strings.TrimSpace(fmt.Sprint(source["promotion_card_title"]))
+		sellingPoints, ok := source["promotion_card_selling_points"].([]any)
+		if imageID == "" || title == "" || !ok || len(sellingPoints) == 0 {
+			continue
+		}
+		titleMaterial, _ := creative["title_material"].([]any)
+		if len(titleMaterial) == 1 {
+			titleItem, _ := titleMaterial[0].(map[string]any)
+			if strings.EqualFold(fmt.Sprint(titleItem["title_type"]), "COMMODITY_CARD") &&
+				strings.TrimSpace(fmt.Sprint(titleItem["title"])) == title {
+				card = map[string]any{
+					"promotion_card_image_id":       imageID,
+					"promotion_card_title":          title,
+					"promotion_card_selling_points": sellingPoints,
+				}
+				card["promotion_card_image_id"] = imageID
+				creative["creative_card"] = card
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return body, false, nil
+	}
+	normalized, err := json.Marshal(root)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode normalized uni promotion detail: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func firstNonEmptyText(values ...any) string {
+	for _, value := range values {
+		text := strings.TrimSpace(fmt.Sprint(value))
+		if text != "" && text != "<nil>" {
+			return text
+		}
+	}
+	return ""
 }
 
 func (c *OceanengineClient) UniPromotionCreate(ctx context.Context, req UniPromotionCreateReq) (*UniPromotionCreateRes, error) {

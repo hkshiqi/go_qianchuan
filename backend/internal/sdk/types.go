@@ -1592,6 +1592,7 @@ type UniPromotionMultiCreativeTitleMaterial struct {
 }
 
 type UniPromotionCreativeCard struct {
+	ProductImageID             string   `json:"product_image_id,omitempty"`
 	PromotionCardTitle         string   `json:"promotion_card_title,omitempty"`
 	PromotionCardSellingPoints []string `json:"promotion_card_selling_points,omitempty"`
 	PromotionCardImageID       string   `json:"promotion_card_image_id,omitempty"`
