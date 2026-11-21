@@ -82,7 +82,7 @@ func TestExistingPlanCreativeMaterialTypeUsesActualPlanContent(t *testing.T) {
 	}
 }
 
-func TestExistingPlanOperationRejectsMixedAndInvalidBoostBudget(t *testing.T) {
+func TestExistingPlanOperationRejectsUnboundAccountAndInvalidBoostBudget(t *testing.T) {
 	tools := &Tools{
 		service:                  &service.QianchuanService{Client: planCRUDNoopClient{}},
 		planCRUDTestWriteEnabled: true,
@@ -92,18 +92,17 @@ func TestExistingPlanOperationRejectsMixedAndInvalidBoostBudget(t *testing.T) {
 		"name":         existingPlanOperationTestPrefix + "20261121-120000",
 		"budget":       31.0,
 		"boost_budget": 1.0,
-		"confirm":      true,
+		"add_image_ids": []any{
+			"tos-cn-i-sd07hgqsbj/existing-image",
+		},
+		"confirm": true,
 	}
-	mixed := cloneMap(base)
-	mixed["add_video_ids"] = []any{"7000000000000001"}
-	mixed["add_image_ids"] = []any{"tos-cn-i-sd07hgqsbj/existing-image"}
-	if _, err := tools.testExistingProductPlanOperations(context.Background(), mixed); err == nil ||
-		!strings.Contains(err.Error(), "cannot be combined") {
-		t.Fatalf("mixed video/image add was not rejected: %v", err)
+	if _, err := tools.testExistingProductPlanOperations(context.Background(), base); err == nil ||
+		!strings.Contains(err.Error(), "account_id is not bound") {
+		t.Fatalf("invalid account was not rejected before network access: %v", err)
 	}
 	invalidBoost := cloneMap(base)
 	invalidBoost["boost_budget"] = 31.01
-	invalidBoost["add_image_ids"] = []any{"tos-cn-i-sd07hgqsbj/existing-image"}
 	if _, err := tools.testExistingProductPlanOperations(context.Background(), invalidBoost); err == nil ||
 		!strings.Contains(err.Error(), "cannot exceed budget") {
 		t.Fatalf("boost budget above plan budget was not rejected: %v", err)

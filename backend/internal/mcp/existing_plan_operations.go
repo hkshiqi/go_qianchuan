@@ -16,8 +16,6 @@ type existingPlanSnapshot struct {
 	Plan          *sdk.UniPromotionDetail
 	MaterialType  string
 	MaterialIDs   []string
-	VideoIDs      []string
-	ImageIDs      []string
 	ProductID     uint64
 	AwemeUID      uint64
 	TaskStartTime string
@@ -63,19 +61,15 @@ func (t *Tools) testExistingProductPlanOperations(
 	if !ok || boostBudget <= 0 || boostBudget > budget {
 		return nil, errors.New("boost_budget must be greater than zero and cannot exceed budget")
 	}
-	addVideoIDs, err := optionalCreativeIDListArg(args, "add_video_ids")
-	if err != nil {
-		return nil, err
-	}
 	addImageIDs, err := optionalCreativeIDListArg(args, "add_image_ids")
 	if err != nil {
 		return nil, err
 	}
-	if len(addVideoIDs) == 0 && len(addImageIDs) == 0 {
-		return nil, errors.New("at least one of add_video_ids or add_image_ids is required")
+	if len(addImageIDs) == 0 {
+		return nil, errors.New("add_image_ids must contain at least one existing square image")
 	}
-	if len(addVideoIDs) > 0 && len(addImageIDs) > 0 {
-		return nil, errors.New("add_video_ids and add_image_ids cannot be combined in one test")
+	if len(addImageIDs) > 20 {
+		return nil, errors.New("add_image_ids cannot contain more than 20 IDs")
 	}
 	account, err := t.resolveAccount(args)
 	if err != nil {
@@ -93,13 +87,10 @@ func (t *Tools) testExistingProductPlanOperations(
 	if err := validateExistingPlanOperationTarget(before.Plan); err != nil {
 		return nil, err
 	}
-	if len(addVideoIDs) > 0 && before.MaterialType != "VIDEO" {
-		return nil, fmt.Errorf("plan creative material_type=%q; video add test requires VIDEO", before.MaterialType)
-	}
-	if len(addImageIDs) > 0 && before.MaterialType != "IMAGE" {
+	if before.MaterialType != "IMAGE" {
 		return nil, fmt.Errorf("plan creative material_type=%q; image add test requires IMAGE", before.MaterialType)
 	}
-	if len(addImageIDs) > 0 && (before.ProductID == 0 || before.AwemeUID == 0) {
+	if before.ProductID == 0 || before.AwemeUID == 0 {
 		return nil, errors.New("image add test requires product_id and aweme_uid from plan detail")
 	}
 	originalBudget := before.Plan.Budget
@@ -188,36 +179,23 @@ func (t *Tools) testExistingProductPlanOperations(
 		"verified": true,
 	})
 
-	var addResponse *sdk.UniPromotionMaterialAddRes
-	if len(addVideoIDs) > 0 {
-		addResponse, err = t.service.Client.UniPromotionMaterialAdd(
-			ctx,
-			sdk.UniPromotionMaterialAddReq{
-				AccessToken:   token,
-				AdvertiserId:  uint64(advertiserID),
-				AdId:          adID,
-				VideoMaterial: videoMaterialPayload(addVideoIDs),
-			},
-		)
-	} else {
-		addResponse, err = t.service.Client.UniPromotionMaterialAdd(
-			ctx,
-			sdk.UniPromotionMaterialAddReq{
-				AccessToken:  token,
-				AdvertiserId: uint64(advertiserID),
-				AdId:         adID,
-				ProductCreativeList: []sdk.UniPromotionProductCreativeMaterialAdd{
-					{
-						ProductID: before.ProductID,
-						AwemeUID:  before.AwemeUID,
-						ImageMaterial: []sdk.UniPromotionImageMaterial{
-							{ImageMode: "SQUARE", ImageIds: addImageIDs},
-						},
+	addResponse, err := t.service.Client.UniPromotionMaterialAdd(
+		ctx,
+		sdk.UniPromotionMaterialAddReq{
+			AccessToken:  token,
+			AdvertiserId: uint64(advertiserID),
+			AdId:         adID,
+			ProductCreativeList: []sdk.UniPromotionProductCreativeMaterialAdd{
+				{
+					ProductID: before.ProductID,
+					AwemeUID:  before.AwemeUID,
+					ImageMaterial: []sdk.UniPromotionImageMaterial{
+						{ImageMode: "SQUARE", ImageIds: addImageIDs},
 					},
 				},
 			},
-		)
-	}
+		},
+	)
 	if err != nil {
 		return rollback(fmt.Errorf("add materials failed: %w", err))
 	}
@@ -235,7 +213,6 @@ func (t *Tools) testExistingProductPlanOperations(
 		adID,
 		before.MaterialType,
 		before.MaterialIDs,
-		addVideoIDs,
 		addImageIDs,
 	)
 	if err != nil {
@@ -396,17 +373,9 @@ func (t *Tools) readExistingPlanSnapshot(
 		return nil, err
 	}
 	materialIDs := make([]string, 0, len(materials))
-	videoIDs := make([]string, 0, len(materials))
-	imageIDs := make([]string, 0, len(materials))
 	for _, material := range materials {
 		if material.MaterialId > 0 {
 			materialIDs = append(materialIDs, formatUintID(material.MaterialId))
-		}
-		if material.VideoId != "" {
-			videoIDs = append(videoIDs, material.VideoId)
-		}
-		if material.ImageId != "" {
-			imageIDs = append(imageIDs, material.ImageId)
 		}
 	}
 	productID, awemeUID := existingPlanCreativeIdentity(response.Data)
@@ -415,8 +384,6 @@ func (t *Tools) readExistingPlanSnapshot(
 		Plan:          response.Data,
 		MaterialType:  materialType,
 		MaterialIDs:   uniqueStrings(materialIDs),
-		VideoIDs:      uniqueStrings(videoIDs),
-		ImageIDs:      uniqueStrings(imageIDs),
 		ProductID:     productID,
 		AwemeUID:      awemeUID,
 		TaskStartTime: startTime,
@@ -538,7 +505,6 @@ func (t *Tools) verifyExistingPlanAddedMaterials(
 	adID uint64,
 	materialType string,
 	beforeIDs []string,
-	videoIDs []string,
 	imageIDs []string,
 ) ([]string, error) {
 	var after []sdk.UniPromotionMaterialInfo
@@ -570,15 +536,11 @@ func (t *Tools) verifyExistingPlanAddedMaterials(
 		beforeSet[id] = true
 	}
 	var added []string
-	afterVideos := make(map[string]bool)
 	afterImages := make(map[string]bool)
 	for _, material := range after {
 		id := formatUintID(material.MaterialId)
 		if id != "" && !beforeSet[id] {
 			added = append(added, id)
-		}
-		if material.VideoId != "" {
-			afterVideos[material.VideoId] = true
 		}
 		if material.ImageId != "" {
 			afterImages[material.ImageId] = true
@@ -586,11 +548,6 @@ func (t *Tools) verifyExistingPlanAddedMaterials(
 	}
 	if len(added) == 0 {
 		return nil, errors.New("official material list did not show any newly attached material")
-	}
-	for _, id := range videoIDs {
-		if !afterVideos[id] {
-			return nil, fmt.Errorf("new video %s not found in official material readback", id)
-		}
 	}
 	for _, id := range imageIDs {
 		if !afterImages[id] {
@@ -805,14 +762,6 @@ func optionalCreativeIDListArg(args map[string]any, key string) ([]string, error
 		result = append(result, text)
 	}
 	return uniqueStrings(result), nil
-}
-
-func videoMaterialPayload(videoIDs []string) []sdk.UniPromotionMaterial {
-	result := make([]sdk.UniPromotionMaterial, 0, len(videoIDs))
-	for _, id := range videoIDs {
-		result = append(result, sdk.UniPromotionMaterial{VideoId: id})
-	}
-	return result
 }
 
 func responseCode(value any) int64 {

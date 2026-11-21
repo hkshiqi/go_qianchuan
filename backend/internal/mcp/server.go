@@ -577,7 +577,7 @@ func availableTools() []tool {
 		{
 			Name:        "qianchuan_test_existing_product_plan_operations",
 			Title:       "验收现有商品计划操作",
-			Description: "仅用于现有商品全域/乘方计划的操作验收，不新建或删除计划。计划必须已暂停；固定执行预算修改、加入现有素材、删除本次新增素材、创建并立即停止一键起量，最后恢复原预算和原素材集合并逐步回读。测试任务名称必须以 Codex-CRUD-EXISTING-PLAN-TEST- 开头。",
+			Description: "仅用于现有商品全域/乘方计划的操作验收，不新建或删除计划。计划必须已暂停且当天无消耗；固定执行预算修改、加入现有图片素材、删除本次新增素材、创建并立即删除一键起量，最后恢复原预算和原素材集合并逐步回读。测试任务名称必须以 Codex-CRUD-EXISTING-PLAN-TEST- 开头。",
 			InputSchema: objectSchema(map[string]any{
 				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":      stringSchema("已暂停的现有商品全域或乘方计划 ID"),
@@ -592,20 +592,15 @@ func availableTools() []tool {
 					"AD_CONVERT_TYPE_LIVE_SUCCESSORDER_PAY",
 					"AD_CONVERT_TYPE_LIVE_HEAT",
 				),
-				"add_video_ids": map[string]any{
-					"type":        "array",
-					"description": "可选；从素材库选择的现有视频 ID。与 add_image_ids 二选一",
-					"maxItems":    20,
-					"items":       map[string]any{"type": "string"},
-				},
 				"add_image_ids": map[string]any{
 					"type":        "array",
-					"description": "可选；商品全域计划的现有 SQUARE 图片创意 ID。与 add_video_ids 二选一",
+					"description": "商品全域计划素材库中的现有 SQUARE 图片创意 ID；至少1个",
+					"minItems":    1,
 					"maxItems":    20,
 					"items":       map[string]any{"type": "string"},
 				},
 				"confirm": booleanSchema("必须为 true 才执行测试写操作"),
-			}, "ad_id", "name", "budget", "boost_budget", "confirm"),
+			}, "ad_id", "name", "budget", "boost_budget", "add_image_ids", "confirm"),
 			Annotations: mutatingAnnotations(false),
 		},
 		{
