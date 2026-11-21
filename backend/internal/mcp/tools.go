@@ -122,6 +122,8 @@ func (t *Tools) Call(ctx context.Context, name string, args map[string]any) (any
 		return t.renameTestProductCardPlan(ctx, args)
 	case "qianchuan_delete_test_product_card_plan":
 		return t.deleteTestProductCardPlan(ctx, args)
+	case "qianchuan_test_existing_product_plan_operations":
+		return t.testExistingProductPlanOperations(ctx, args)
 	case "qianchuan_create_test_overall_product_plan":
 		return t.createTestOverallProductPlan(ctx, args)
 	case "qianchuan_rename_test_overall_product_plan":
@@ -200,6 +202,7 @@ func (t *Tools) status(ctx context.Context, args map[string]any) (Status, error)
 			"create_test_product_card_plan",
 			"rename_test_product_card_plan",
 			"delete_test_product_card_plan",
+			"test_existing_product_plan_operations",
 			"create_test_overall_product_plan",
 			"rename_test_overall_product_plan",
 			"delete_test_overall_product_plan",

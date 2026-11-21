@@ -2621,6 +2621,9 @@ func (c *OceanengineClient) UniPromotionList(ctx context.Context, req UniPromoti
 	if req.PageSize > 0 {
 		values.Set("page_size", strconv.Itoa(req.PageSize))
 	}
+	if req.AdlabScene != "" {
+		values.Set("adlab_scene", strings.ToUpper(req.AdlabScene))
+	}
 	if req.Filtering != nil {
 		filtering, _ := json.Marshal(req.Filtering)
 		values.Set("filtering", string(filtering))
@@ -3249,29 +3252,72 @@ func (c *OceanengineClient) UniPromotionMaterialGet(ctx context.Context, req Uni
 }
 
 func (c *OceanengineClient) UniPromotionMaterialAdd(ctx context.Context, req UniPromotionMaterialAddReq) (*UniPromotionMaterialAddRes, error) {
-	media := make([]uniPromotionModel.VideoMaterial, 0, len(req.VideoMaterial))
-	for _, material := range req.VideoMaterial {
-		media = append(media, uniPromotionModel.VideoMaterial{
-			VideoID:      material.VideoId,
-			VideoCoverID: material.VideoCoverId,
-			AwemeItemID:  material.AwemeItemId,
-			ImageMode:    enum.MaterialMode(material.ImageMode),
-		})
+	payload := map[string]any{
+		"advertiser_id": req.AdvertiserId,
+		"ad_id":         req.AdId,
 	}
-	oeReq := &uniPromotionModel.MaterialAddRequest{
-		AdvertiserID: req.AdvertiserId,
-		AdID:         req.AdId,
-		ProgrammaticCreativeMediaList: []uniPromotionModel.ProgrammaticCreativeMedia{
-			{VideoMaterial: media},
-		},
+	if len(req.ProductCreativeList) > 0 {
+		payload["multi_product_creative_list"] = req.ProductCreativeList
+	} else {
+		media := make([]map[string]any, 0, len(req.VideoMaterial))
+		for _, material := range req.VideoMaterial {
+			item := map[string]any{}
+			if material.VideoId != "" {
+				item["video_id"] = material.VideoId
+			}
+			if material.VideoCoverId != "" {
+				item["video_cover_id"] = material.VideoCoverId
+			}
+			if material.AwemeItemId != 0 {
+				item["aweme_item_id"] = material.AwemeItemId
+			}
+			if material.ImageMode != "" {
+				item["image_mode"] = material.ImageMode
+			}
+			media = append(media, item)
+		}
+		payload["programmatic_creative_media_list"] = map[string]any{
+			"video_material": media,
+		}
 	}
-	if err := uniPromotionAPI.MaterialAdd(ctx, c.client, req.AccessToken, oeReq); err != nil {
-		return &UniPromotionMaterialAddRes{
-			Code:    500,
-			Message: err.Error(),
-		}, nil
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
 	}
-	return &UniPromotionMaterialAddRes{Code: 0, Message: "success"}, nil
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
+	}
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/uni_promotion/ad/material/add/",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("add existing materials HTTP %d: %s", response.StatusCode, string(responseBody))
+	}
+	var result UniPromotionMaterialAddRes
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return nil, fmt.Errorf("decode add existing materials response: %w", err)
+	}
+	if result.Code != 0 {
+		return &result, nil
+	}
+	return &result, nil
 }
 
 // calculateGPM follows the live-commerce convention:
@@ -3380,6 +3426,7 @@ func (c *OceanengineClient) UniPromotionControlTaskCreate(
 		Name           string   `json:"name,omitempty"`
 		Scene          string   `json:"scene"`
 		Budget         float64  `json:"budget"`
+		Duration       float64  `json:"duration,omitempty"`
 		MaterialIDs    []uint64 `json:"material_ids"`
 		ExternalAction string   `json:"external_action"`
 		SmartBidType   string   `json:"smart_bid_type"`
@@ -3391,6 +3438,7 @@ func (c *OceanengineClient) UniPromotionControlTaskCreate(
 		Name:           req.Name,
 		Scene:          req.Scene,
 		Budget:         req.Budget,
+		Duration:       req.Duration,
 		MaterialIDs:    req.MaterialIds,
 		ExternalAction: req.ExternalAction,
 		SmartBidType:   req.SmartBidType,

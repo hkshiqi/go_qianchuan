@@ -575,6 +575,40 @@ func availableTools() []tool {
 			Annotations: mutatingAnnotations(true),
 		},
 		{
+			Name:        "qianchuan_test_existing_product_plan_operations",
+			Title:       "验收现有商品计划操作",
+			Description: "仅用于现有商品全域/乘方计划的操作验收，不新建或删除计划。计划必须已暂停；固定执行预算修改、加入现有素材、删除本次新增素材、创建并立即停止一键起量，最后恢复原预算和原素材集合并逐步回读。测试任务名称必须以 Codex-CRUD-EXISTING-PLAN-TEST- 开头。",
+			InputSchema: objectSchema(map[string]any{
+				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
+				"ad_id":      stringSchema("已暂停的现有商品全域或乘方计划 ID"),
+				"name":       stringSchema("一键起量测试任务名；必须以 Codex-CRUD-EXISTING-PLAN-TEST- 开头"),
+				"budget":     numberSchema("临时计划的日预算，人民币元；测试后恢复", 0.01),
+				"boost_budget": numberSchema(
+					"一键起量调控预算，人民币元；不得超过临时计划预算",
+					0.01,
+				),
+				"external_action": stringEnumSchema(
+					"一键起量探索目标",
+					"AD_CONVERT_TYPE_LIVE_SUCCESSORDER_PAY",
+					"AD_CONVERT_TYPE_LIVE_HEAT",
+				),
+				"add_video_ids": map[string]any{
+					"type":        "array",
+					"description": "可选；从素材库选择的现有视频 ID。与 add_image_ids 二选一",
+					"maxItems":    20,
+					"items":       map[string]any{"type": "string"},
+				},
+				"add_image_ids": map[string]any{
+					"type":        "array",
+					"description": "可选；商品全域计划的现有 SQUARE 图片创意 ID。与 add_video_ids 二选一",
+					"maxItems":    20,
+					"items":       map[string]any{"type": "string"},
+				},
+				"confirm": booleanSchema("必须为 true 才执行测试写操作"),
+			}, "ad_id", "name", "budget", "boost_budget", "confirm"),
+			Annotations: mutatingAnnotations(false),
+		},
+		{
 			Name:        "qianchuan_create_test_overall_product_plan",
 			Title:       "创建隔离乘方商品测试计划",
 			Description: "仅用于乘方计划 CRUD 验收。名称必须以 Codex-CRUD-OVERALL-TEST- 开头；平台最低预算为300元，因此测试预算只能等于300元；开始日期不早于明天；抖音号必须来自官方乘方可投列表；创建后立即暂停并回读。",

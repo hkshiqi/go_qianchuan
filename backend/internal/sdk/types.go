@@ -1385,15 +1385,27 @@ type UniPromotion struct {
 	AwemeName     string     `json:"aweme_name"`
 	ProductId     uint64     `json:"product_id"`
 	ProductName   string     `json:"product_name"`
-	StartTime     string     `json:"start_time"`
-	EndTime       string     `json:"end_time"`
-	CreateTime    string     `json:"create_time"`
-	ModifyTime    string     `json:"modify_time"`
-	SmartBidType  string     `json:"smart_bid_type,omitempty"`
-	StatCost      float64    `json:"stat_cost"`
-	PayOrderCount float64    `json:"total_pay_order_count_for_roi2"`
-	PayOrderGMV   float64    `json:"total_pay_order_gmv_for_roi2"`
-	PayOrderROI   float64    `json:"total_prepay_and_pay_order_roi2"`
+	ProductInfo   []struct {
+		ProductID   uint64 `json:"product_id"`
+		ProductName string `json:"product_name"`
+	} `json:"product_info"`
+	StatsInfo struct {
+		StatCost           float64 `json:"stat_cost"`
+		CostForOverallROI2 float64 `json:"stat_cost_for_overall_roi2"`
+		ROI2               float64 `json:"total_prepay_and_pay_order_roi2"`
+		PayOrderGMV        float64 `json:"total_pay_order_gmv_for_roi2"`
+		PayOrderCount      float64 `json:"total_pay_order_count_for_roi2"`
+		PayOrderCost       float64 `json:"total_cost_per_pay_order_for_roi2"`
+	} `json:"stats_info"`
+	StartTime     string  `json:"start_time"`
+	EndTime       string  `json:"end_time"`
+	CreateTime    string  `json:"create_time"`
+	ModifyTime    string  `json:"modify_time"`
+	SmartBidType  string  `json:"smart_bid_type,omitempty"`
+	StatCost      float64 `json:"stat_cost"`
+	PayOrderCount float64 `json:"total_pay_order_count_for_roi2"`
+	PayOrderGMV   float64 `json:"total_pay_order_gmv_for_roi2"`
+	PayOrderROI   float64 `json:"total_prepay_and_pay_order_roi2"`
 }
 
 type UniPromotionListReq struct {
@@ -1407,6 +1419,7 @@ type UniPromotionListReq struct {
 	OrderType     string                     `json:"order_type,omitempty"`
 	Page          int                        `json:"page,omitempty"`
 	PageSize      int                        `json:"page_size,omitempty"`
+	AdlabScene    string                     `json:"adlab_scene,omitempty"`
 	Filtering     *UniPromotionListFiltering `json:"filtering,omitempty"`
 }
 
@@ -1468,6 +1481,7 @@ type UniPromotionDetail struct {
 	CreativeSetting               map[string]any                         `json:"creative_setting,omitempty"`
 	RoomInfo                      []UniPromotionRoomInfo                 `json:"room_info,omitempty"`
 	ProgrammaticCreativeMediaList *UniPromotionProgrammaticCreativeMedia `json:"programmatic_creative_media_list,omitempty"`
+	MultiProductCreativeList      []UniPromotionMultiProductCreative     `json:"multi_product_creative_list,omitempty"`
 	AwemeInfos                    []UniPromotionAwemeInfo                `json:"aweme_infos,omitempty"`
 	LabAdType                     string                                 `json:"lab_ad_type,omitempty"`
 	AutoExtendEnabled             int                                    `json:"auto_extend_enabled,omitempty"`
@@ -1538,6 +1552,19 @@ type UniPromotionProgrammaticCreativeMedia struct {
 	BlockVideoMaterial []UniPromotionCreativeBlockMaterial `json:"block_video_material,omitempty"`
 }
 
+type UniPromotionMultiProductCreative struct {
+	ProductID        uint64                                   `json:"product_id,omitempty"`
+	AwemeUID         uint64                                   `json:"aweme_uid,omitempty"`
+	CreativeType     string                                   `json:"creative_type,omitempty"`
+	HideInAweme      bool                                     `json:"hide_in_aweme,omitempty"`
+	VideoMaterial    []UniPromotionCreativeVideoMaterial      `json:"video_material,omitempty"`
+	ImageMaterial    []UniPromotionCreativeImageMaterial      `json:"image_material,omitempty"`
+	TitleMaterial    []UniPromotionMultiCreativeTitleMaterial `json:"title_material,omitempty"`
+	CreativeCard     *UniPromotionCreativeCard                `json:"creative_card,omitempty"`
+	BlockMaterial    []UniPromotionCreativeBlockMaterial      `json:"block_material,omitempty"`
+	CarouselMaterial []UniPromotionCreativeCarouselMaterial   `json:"carousel_material,omitempty"`
+}
+
 type UniPromotionCreativeVideoMaterial struct {
 	ImageMode    string `json:"image_mode,omitempty"`
 	VideoID      string `json:"video_id,omitempty"`
@@ -1552,6 +1579,28 @@ type UniPromotionCreativeTitleMaterial struct {
 
 type UniPromotionCreativeBlockMaterial struct {
 	AwemeItemID uint64 `json:"aweme_item_id,omitempty"`
+}
+
+type UniPromotionCreativeImageMaterial struct {
+	ImageMode string   `json:"image_mode,omitempty"`
+	ImageIDs  []string `json:"image_ids,omitempty"`
+}
+
+type UniPromotionMultiCreativeTitleMaterial struct {
+	Title     string `json:"title,omitempty"`
+	TitleType string `json:"title_type,omitempty"`
+}
+
+type UniPromotionCreativeCard struct {
+	PromotionCardTitle         string   `json:"promotion_card_title,omitempty"`
+	PromotionCardSellingPoints []string `json:"promotion_card_selling_points,omitempty"`
+	PromotionCardImageID       string   `json:"promotion_card_image_id,omitempty"`
+	PromotionCardActionButton  string   `json:"promotion_card_action_button,omitempty"`
+}
+
+type UniPromotionCreativeCarouselMaterial struct {
+	AwemeCarouselID uint64 `json:"aweme_carousel_id,omitempty"`
+	CarouselID      uint64 `json:"carousel_id,omitempty"`
 }
 
 type UniPromotionRoomInfo struct {
@@ -1776,10 +1825,23 @@ type UniPromotionMaterialInfo struct {
 }
 
 type UniPromotionMaterialAddReq struct {
-	AccessToken   string                 `json:"-"`
-	AdvertiserId  uint64                 `json:"advertiser_id"`
-	AdId          uint64                 `json:"ad_id"`
-	VideoMaterial []UniPromotionMaterial `json:"video_material"`
+	AccessToken         string                                   `json:"-"`
+	AdvertiserId        uint64                                   `json:"advertiser_id"`
+	AdId                uint64                                   `json:"ad_id"`
+	VideoMaterial       []UniPromotionMaterial                   `json:"video_material"`
+	ProductCreativeList []UniPromotionProductCreativeMaterialAdd `json:"-"`
+}
+
+type UniPromotionProductCreativeMaterialAdd struct {
+	ProductID     uint64                      `json:"product_id,omitempty"`
+	AwemeUID      uint64                      `json:"aweme_uid,omitempty"`
+	VideoMaterial []UniPromotionMaterial      `json:"video_material,omitempty"`
+	ImageMaterial []UniPromotionImageMaterial `json:"image_material,omitempty"`
+}
+
+type UniPromotionImageMaterial struct {
+	ImageMode string   `json:"image_mode"`
+	ImageIds  []string `json:"image_ids"`
 }
 
 type UniPromotionMaterialAddRes struct {
@@ -1958,6 +2020,7 @@ type UniPromotionControlTaskCreateReq struct {
 	Name           string   `json:"name,omitempty"`
 	Scene          string   `json:"scene"`
 	Budget         float64  `json:"budget"`
+	Duration       float64  `json:"duration,omitempty"`
 	MaterialIds    []uint64 `json:"material_ids"`
 	ExternalAction string   `json:"external_action"`
 	SmartBidType   string   `json:"smart_bid_type"`
@@ -2030,6 +2093,49 @@ type UniPromotionControlTaskListRes struct {
 	Data      struct {
 		TaskList []UniPromotionControlTask `json:"task_list"`
 		PageInfo PageInfo                  `json:"page_info"`
+	} `json:"data"`
+}
+
+type UniPromotionControlTaskStatusUpdateReq struct {
+	AccessToken  string   `json:"-"`
+	AdvertiserId uint64   `json:"advertiser_id"`
+	TaskIds      []uint64 `json:"task_ids"`
+	OptType      string   `json:"opt_type"`
+}
+
+type UniPromotionControlTaskStatusUpdateRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		TaskIds []uint64                                   `json:"task_ids,omitempty"`
+		Errors  []UniPromotionControlTaskStatusUpdateError `json:"errors,omitempty"`
+	} `json:"data"`
+}
+
+type UniPromotionControlTaskStatusUpdateError struct {
+	TaskID       uint64 `json:"task_id"`
+	ErrorMessage string `json:"error_message"`
+}
+
+type UniPromotionControlTaskUpdateReq struct {
+	AccessToken  string   `json:"-"`
+	AdvertiserId uint64   `json:"advertiser_id"`
+	TaskID       uint64   `json:"task_id"`
+	Name         string   `json:"name"`
+	Budget       float64  `json:"budget"`
+	Roi2Goal     float64  `json:"roi2_goal,omitempty"`
+	MaterialIDs  []uint64 `json:"material_ids,omitempty"`
+	Duration     float64  `json:"duration,omitempty"`
+	Bid          float64  `json:"bid,omitempty"`
+}
+
+type UniPromotionControlTaskUpdateRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		FailedInfos []uint64 `json:"failed_infos,omitempty"`
 	} `json:"data"`
 }
 
