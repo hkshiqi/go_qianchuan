@@ -34,6 +34,27 @@ func TestOperationReadOnlyPathsAddsPublicPrefix(t *testing.T) {
 	}
 }
 
+func TestPublicURLUsesExplicitOAuthOverride(t *testing.T) {
+	actual := publicURL(
+		"https://qianchuan.example/oauth/authorize",
+		"https://qianchuan.example",
+		"/qianchuan-app",
+		"/oauth/authorize",
+	)
+	expected := "https://qianchuan.example/oauth/authorize"
+	if actual != expected {
+		t.Fatalf("publicURL override = %q, want %q", actual, expected)
+	}
+}
+
+func TestPublicURLKeepsLegacyPrefixWithoutOverride(t *testing.T) {
+	actual := publicURL("", "https://qianchuan.example/", "qianchuan-app/", "/oauth/authorize")
+	expected := "https://qianchuan.example/qianchuan-app/oauth/authorize"
+	if actual != expected {
+		t.Fatalf("publicURL default = %q, want %q", actual, expected)
+	}
+}
+
 func TestDedicatedHostUsesRootRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

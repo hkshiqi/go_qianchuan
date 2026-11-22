@@ -109,8 +109,13 @@ func buildRouter(appID int64, appSecret string, publicPathPrefix string) *gin.En
 		log.Fatalf("initialize tenant store: %v", err)
 	}
 	authStates := authstate.New(10 * time.Minute)
-	oauthAuthorizationURL := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn") +
-		publicPathPrefix + "/oauth/authorize"
+	oauthPublicOrigin := envString("OAUTH_PUBLIC_ORIGIN", "https://dkl4ii67.zjz-service.cn")
+	oauthAuthorizationURL := publicURL(
+		envString("OAUTH_AUTHORIZE_URL", ""),
+		oauthPublicOrigin,
+		publicPathPrefix,
+		"/oauth/authorize",
+	)
 	tenantFactory, err := mcp.NewTenantFactory(mcp.TenantFactoryOptions{
 		Client:                    client,
 		AppID:                     appID,
@@ -380,6 +385,13 @@ func normalizePublicPathPrefix(value string) string {
 		return ""
 	}
 	return "/" + strings.Trim(value, "/")
+}
+
+func publicURL(configured, origin, prefix, path string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured
+	}
+	return strings.TrimRight(origin, "/") + normalizePublicPathPrefix(prefix) + path
 }
 
 func registerUniPromotionRoutes(group *gin.RouterGroup, h *handler.UniPromotionHandler) {
