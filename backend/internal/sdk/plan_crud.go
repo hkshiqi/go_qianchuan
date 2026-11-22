@@ -124,6 +124,35 @@ type QianchuanImageGetRes struct {
 	} `json:"data"`
 }
 
+type QianchuanVideoGetReq struct {
+	AccessToken  string
+	AdvertiserId uint64
+	MaterialIDs  []int64
+	Page         int
+	PageSize     int
+}
+
+type QianchuanVideo struct {
+	ID         string  `json:"id"`
+	VideoID    string  `json:"video_id"`
+	MaterialID uint64  `json:"material_id"`
+	Duration   float64 `json:"duration"`
+	CreateTime string  `json:"create_time"`
+	Filename   string  `json:"filename"`
+	ImageMode  string  `json:"image_mode"`
+	Source     string  `json:"source"`
+}
+
+type QianchuanVideoGetRes struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+	Data      struct {
+		List     []QianchuanVideo `json:"list"`
+		PageInfo PageInfo         `json:"page_info"`
+	} `json:"data"`
+}
+
 type OverallProductPlanNameUpdateReq struct {
 	AccessToken  string
 	AdvertiserId uint64
@@ -387,6 +416,71 @@ func (c *OceanengineClient) QianchuanImageGet(
 	var result QianchuanImageGetRes
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("decode qianchuan image list: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *OceanengineClient) QianchuanVideoGet(
+	ctx context.Context,
+	req QianchuanVideoGetReq,
+) (*QianchuanVideoGetRes, error) {
+	return c.qianchuanVideoGet(
+		ctx,
+		req,
+		"https://api.oceanengine.com/open_api/v1.0/qianchuan/video/get/",
+	)
+}
+
+func (c *OceanengineClient) qianchuanVideoGet(
+	ctx context.Context,
+	req QianchuanVideoGetReq,
+	endpointBase string,
+) (*QianchuanVideoGetRes, error) {
+	if err := c.throttle.wait(ctx); err != nil {
+		return nil, err
+	}
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	filter := map[string]any{}
+	if len(req.MaterialIDs) > 0 {
+		filter["material_ids"] = req.MaterialIDs
+	}
+	encodedFilter, _ := json.Marshal(filter)
+	values := url.Values{}
+	values.Set("advertiser_id", strconv.FormatUint(req.AdvertiserId, 10))
+	values.Set("filtering", string(encodedFilter))
+	values.Set("page", strconv.Itoa(page))
+	values.Set("page_size", strconv.Itoa(pageSize))
+	endpoint := endpointBase + "?" + values.Encode()
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Access-Token", req.AccessToken)
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("qianchuan video get HTTP %d: %s", response.StatusCode, string(body))
+	}
+	var result QianchuanVideoGetRes
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode qianchuan video list: %w", err)
 	}
 	return &result, nil
 }

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CriarBrand/qianchuan-backend/internal/sdk"
+	"github.com/CriarBrand/qianchuan-backend/internal/service"
 	"github.com/CriarBrand/qianchuan-backend/pkg/tenantstore"
 )
 
@@ -223,6 +225,7 @@ func TestReportFieldsSelectSupportedMaterialMetrics(t *testing.T) {
 			{Field: "ad_id"},
 			{Field: "roi2_material_video_name"},
 			{Field: "roi2_material_upload_time"},
+			{Field: "create_time"},
 			{Field: "roi2_material_status", FilterOnly: true},
 		},
 		Metrics: []sdk.UniPromotionReportMetric{
@@ -298,6 +301,10 @@ func TestMaterialFromReportRowMapsLiveMaterialMetrics(t *testing.T) {
 		Dimensions: map[string]any{
 			"material_id":   "7654214461952425993",
 			"material_name": "test",
+			"create_time": map[string]any{
+				"value":    "2026-09-08 17:33:23",
+				"valueStr": "2026-09-08 17:33:23",
+			},
 		},
 		Metrics: map[string]any{
 			"basic_stat_cost_for_roi2_v2":                 357.05,
@@ -513,6 +520,71 @@ func TestReportPageSizeUsesOfficialAllowedValues(t *testing.T) {
 		if actual := reportPageSize(input); actual != expected {
 			t.Errorf("reportPageSize(%d) = %d, want %d", input, actual, expected)
 		}
+	}
+}
+
+type materialDateTestClient struct {
+	sdk.QianchuanClient
+	request sdk.QianchuanVideoGetReq
+	found   []sdk.QianchuanVideo
+}
+
+func (c *materialDateTestClient) QianchuanVideoGet(
+	_ context.Context,
+	req sdk.QianchuanVideoGetReq,
+) (*sdk.QianchuanVideoGetRes, error) {
+	c.request = req
+	return &sdk.QianchuanVideoGetRes{
+		Code:    0,
+		Message: "OK",
+		Data: struct {
+			List     []sdk.QianchuanVideo `json:"list"`
+			PageInfo sdk.PageInfo         `json:"page_info"`
+		}{
+			List: c.found,
+		},
+	}, nil
+}
+
+func TestFillMaterialCreationDatesUsesOfficialVideoQuery(t *testing.T) {
+	client := &materialDateTestClient{
+		found: []sdk.QianchuanVideo{
+			{
+				MaterialID: 7654214461952425993,
+				CreateTime: "2026-09-08 17:33:23",
+			},
+		},
+	}
+	tools := &Tools{service: &service.QianchuanService{Client: client}}
+	materials := []MaterialMetrics{
+		{MaterialID: "7654214461952425993"},
+		{MaterialID: "7660659586093924358"},
+		{MaterialID: "not-a-number"},
+	}
+
+	source, warnings := tools.fillMaterialCreationDates(
+		context.Background(),
+		"test-token",
+		1855810750424170,
+		materials,
+	)
+
+	if source != "qianchuan_video_get" {
+		t.Fatalf("source = %q", source)
+	}
+	if len(client.request.MaterialIDs) != 2 ||
+		client.request.MaterialIDs[0] != 7654214461952425993 ||
+		client.request.MaterialIDs[1] != 7660659586093924358 {
+		t.Fatalf("material IDs sent = %#v", client.request.MaterialIDs)
+	}
+	if materials[0].UploadedAt != "2026-09-08 17:33:23" ||
+		materials[0].CreationDate != "2026-09-08" {
+		t.Fatalf("filled material = %#v", materials[0])
+	}
+	if len(warnings) != 2 ||
+		warnings[0] != "已跳过 1 条无有效素材ID的报表聚合行" ||
+		warnings[1] != "素材创建时间仅补齐 1/2 条" {
+		t.Fatalf("warnings = %#v", warnings)
 	}
 }
 

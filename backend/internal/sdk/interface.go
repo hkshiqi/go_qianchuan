@@ -136,6 +136,7 @@ type QianchuanClient interface {
 	UniPromotionControlTaskStatusUpdate(ctx context.Context, req UniPromotionControlTaskStatusUpdateReq) (*UniPromotionControlTaskStatusUpdateRes, error)
 	UniPromotionControlTaskUpdate(ctx context.Context, req UniPromotionControlTaskUpdateReq) (*UniPromotionControlTaskUpdateRes, error)
 	QianchuanImageGet(ctx context.Context, req QianchuanImageGetReq) (*QianchuanImageGetRes, error)
+	QianchuanVideoGet(ctx context.Context, req QianchuanVideoGetReq) (*QianchuanVideoGetRes, error)
 }
 
 // QianchuanError 统一错误类型

@@ -322,6 +322,15 @@ for material in report_materials:
         "basic_stat_cost" in str(material.get("metric_basis") or ""),
         f"material report: missing metric basis: {material}",
     )
+    if material.get("uploaded_at"):
+        require(
+            material.get("creation_date") == str(material.get("uploaded_at"))[:10],
+            f"material report: invalid creation date: {material}",
+        )
+require(
+    any(material.get("uploaded_at") for material in report_materials),
+    "material report: no material upload date returned",
+)
 require(
     all(
         report_materials[index].get("base_cost") >= report_materials[index + 1].get("base_cost")

@@ -33,6 +33,8 @@ type MaterialMetrics struct {
 	VideoID               string   `json:"video_id,omitempty"`
 	AwemeItemID           string   `json:"aweme_item_id,omitempty"`
 	Status                string   `json:"status,omitempty"`
+	UploadedAt            string   `json:"uploaded_at,omitempty"`
+	CreationDate          string   `json:"creation_date,omitempty"`
 	BaseCost              float64  `json:"base_cost"`
 	TotalCost             float64  `json:"total_cost"`
 	Cost                  float64  `json:"cost"`

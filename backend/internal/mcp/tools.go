@@ -646,6 +646,13 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		materials[index].ProtectedTop3 = index < DefaultRuleConfig().ProtectedTopN
 		materials[index].EligibleReplace = !materials[index].ProtectedTop3
 	}
+	materialDateSource, materialDateWarnings := t.fillMaterialCreationDates(
+		ctx,
+		token,
+		advertiserID,
+		materials,
+	)
+	warnings := append([]string{}, materialDateWarnings...)
 	return map[string]any{
 		"account":        t.account(account),
 		"window":         map[string]string{"start_date": startDate, "end_date": endDate},
@@ -657,6 +664,8 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		"dimensions":     dimensionFields,
 		"metrics":        metricFields,
 		"source":         "qianchuan report uni_promotion data",
+		"date_source":    materialDateSource,
+		"warnings":       warnings,
 		"metric_basis": map[string]string{
 			"cost":            "basic_stat_cost_for_roi2_v2（基础消耗）",
 			"total_cost":      "stat_cost_for_roi2（整体消耗/综合成本）",
@@ -665,6 +674,94 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		},
 		"write_guard": "素材库只读；本工具不会上传或创建素材",
 	}, nil
+}
+
+func (t *Tools) fillMaterialCreationDates(
+	ctx context.Context,
+	token string,
+	advertiserID int64,
+	materials []MaterialMetrics,
+) (string, []string) {
+	pending := make([]int64, 0, len(materials))
+	byMaterialID := make(map[string]*MaterialMetrics, len(materials))
+	var warnings []string
+	aggregateRows := 0
+	for index := range materials {
+		material := &materials[index]
+		if material.MaterialID == "" {
+			continue
+		}
+		byMaterialID[material.MaterialID] = material
+		if material.UploadedAt == "" {
+			materialID, err := strconv.ParseUint(material.MaterialID, 10, 63)
+			if err != nil {
+				aggregateRows++
+				continue
+			}
+			pending = append(pending, int64(materialID))
+		}
+	}
+	if aggregateRows > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"已跳过 %d 条无有效素材ID的报表聚合行",
+			aggregateRows,
+		))
+	}
+	if len(pending) == 0 {
+		return "qianchuan_report_uni_promotion", warnings
+	}
+
+	filledCount := 0
+	for start := 0; start < len(pending); start += 100 {
+		end := start + 100
+		if end > len(pending) {
+			end = len(pending)
+		}
+		response, err := t.service.Client.QianchuanVideoGet(
+			ctx,
+			sdk.QianchuanVideoGetReq{
+				AccessToken:  token,
+				AdvertiserId: uint64(advertiserID),
+				MaterialIDs:  pending[start:end],
+				Page:         1,
+				PageSize:     100,
+			},
+		)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("查询素材创建时间失败: %v", err))
+			continue
+		}
+		if response.Code != 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"查询素材创建时间失败: [%d] %s",
+				response.Code,
+				response.Message,
+			))
+			continue
+		}
+		for _, video := range response.Data.List {
+			materialID := strconv.FormatUint(video.MaterialID, 10)
+			material := byMaterialID[materialID]
+			if material == nil || video.CreateTime == "" {
+				continue
+			}
+			material.UploadedAt = video.CreateTime
+			material.CreationDate = reportDate(video.CreateTime)
+			filledCount++
+		}
+	}
+	if filledCount == 0 {
+		warnings = append(warnings, "官方素材库未返回素材创建时间")
+		return "unavailable", warnings
+	}
+	if filledCount < len(pending) {
+		warnings = append(warnings, fmt.Sprintf(
+			"素材创建时间仅补齐 %d/%d 条",
+			filledCount,
+			len(pending),
+		))
+	}
+	return "qianchuan_video_get", warnings
 }
 
 func (t *Tools) liveOverview(ctx context.Context, args map[string]any) (any, error) {
@@ -3983,12 +4080,21 @@ func materialFromReportRow(row sdk.UniPromotionReportRow, rank int) MaterialMetr
 	if baseCTR != nil || baseConversionRate != nil {
 		metricBasis = "cost=basic_stat_cost; ctr/conversion_rate=overall; base_ctr/base_conversion_rate from basic counts"
 	}
+	uploadedAt := anyString(
+		dimensions,
+		"create_time",
+		"createTime",
+		"roi2_material_upload_time",
+		"roi2MaterialUploadTime",
+	)
 	return MaterialMetrics{
 		MaterialID:            materialID,
 		Title:                 anyString(dimensions, "roi2_material_video_name", "material_name", "title", "video_title"),
 		VideoID:               anyString(dimensions, "video_id"),
 		AwemeItemID:           anyID(dimensions, "aweme_item_id"),
 		Status:                anyString(dimensions, "roi2_material_status", "material_status"),
+		UploadedAt:            uploadedAt,
+		CreationDate:          reportDate(uploadedAt),
 		BaseCost:              baseCost,
 		TotalCost:             totalCost,
 		Cost:                  cost,
@@ -4060,7 +4166,10 @@ func unwrapReportValue(value any) any {
 	if !ok {
 		return value
 	}
-	for _, key := range []string{"Value", "ValueStr", "ShortValueStr"} {
+	for _, key := range []string{
+		"Value", "ValueStr", "ShortValueStr",
+		"value", "valueStr", "shortValueStr",
+	} {
 		if nested, exists := object[key]; exists && nested != nil {
 			return nested
 		}
@@ -4092,6 +4201,14 @@ func anyString(values map[string]any, keys ...string) string {
 	value := anyValue(values, keys...)
 	if typed, ok := value.(string); ok {
 		return typed
+	}
+	return ""
+}
+
+func reportDate(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= len("2006-01-02") {
+		return value[:len("2006-01-02")]
 	}
 	return ""
 }

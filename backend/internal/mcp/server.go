@@ -254,7 +254,7 @@ func availableTools() []tool {
 		{
 			Name:        "qianchuan_material_report",
 			Title:       "素材库效果报表",
-			Description: "读取素材库效果数据并按基础消耗标记前3；返回基础消耗、整体消耗、整体点击率、整体转化率、GPM、ROI，基础点击/转化仅在官方提供时返回。",
+			Description: "读取素材库效果数据并按基础消耗标记前3；返回素材上传时间、创建日期、基础消耗、整体消耗、整体点击率、整体转化率、GPM、ROI，基础点击/转化仅在官方提供时返回。",
 			InputSchema: objectSchema(map[string]any{
 				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"start_date": stringSchema("开始日期 YYYY-MM-DD；默认今天"),

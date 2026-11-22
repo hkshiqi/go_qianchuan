@@ -18,10 +18,12 @@
 | `qianchuan_list_plans` | 计划列表、消耗与成交 |
 | `qianchuan_get_plan` | 单计划详情 |
 | `qianchuan_get_plan_materials` | 计划素材指标与当日消耗前三保护名单；`metric_basis` 标明口径 |
-| `qianchuan_material_report` | 素材库报表；按基础消耗排序，同时返回整体消耗、整体点击率/转化率 |
+| `qianchuan_material_report` | 素材库报表；按基础消耗排序，同时返回素材上传/创建日期、整体消耗、整体点击率/转化率 |
 | `qianchuan_live_overview` | 当前直播间当日投放概览 |
 
 素材库报表的 `base_cost` 和默认 `cost` 使用官方 `basic_stat_cost_for_roi2_v2`（基础消耗，不包含一键起量和视频追投）；`total_cost` 使用 `stat_cost_for_roi2`（整体消耗/综合成本）。官方素材库配置目前只提供基础消耗，没有基础点击率、基础转化率，因此 `ctr`、`conversion_rate` 明确为整体口径；`base_ctr`、`base_conversion_rate` 仅在官方返回基础计数或基础比率时出现。
+
+素材的 `uploaded_at` 由官方 `qianchuan.video.get`（`qianchuan_video_get`）按素材 ID 查询并回填，取素材库返回的 `create_time`（素材上传/入库时间），`creation_date` 是其日期部分；`date_source` 标明实际来源。该日期是素材进入千川素材库的日期，不是原视频拍摄日期。素材报表本身不声明上传时间维度，因此不在报表请求中强行加入 `roi2_material_upload_time` 或 `create_time`。
 
 素材删除保护由服务端执行：素材库报表拉取全部分页后按基础消耗显式降序排序，锁定前三名；有消耗素材所在状态为 `ALL`，避免暂停素材漏保护。删除接口无法通过客户端日期缩小保护窗口，也无法仅凭标题删除。
 
