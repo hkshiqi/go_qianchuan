@@ -226,6 +226,7 @@ func TestReportFieldsSelectSupportedMaterialMetrics(t *testing.T) {
 			{Field: "roi2_material_status", FilterOnly: true},
 		},
 		Metrics: []sdk.UniPromotionReportMetric{
+			{Field: "basic_stat_cost_for_roi2_v2"},
 			{Field: "stat_cost_for_roi2"},
 			{Field: "total_prepay_and_pay_order_roi2"},
 			{Field: "total_pay_order_gmv_include_coupon_for_roi2"},
@@ -242,10 +243,11 @@ func TestReportFieldsSelectSupportedMaterialMetrics(t *testing.T) {
 		t.Fatalf("dimension fields = %#v", dimensions)
 	}
 	metrics := reportMetricFields(config)
-	if len(metrics) != 4 || metrics[0] != "stat_cost_for_roi2" ||
-		metrics[1] != "total_pay_order_gmv_include_coupon_for_roi2" ||
-		metrics[2] != "total_prepay_and_pay_order_roi2" ||
-		metrics[3] != "total_ecpm_for_roi2" {
+	if len(metrics) != 5 || metrics[0] != "basic_stat_cost_for_roi2_v2" ||
+		metrics[1] != "stat_cost_for_roi2" ||
+		metrics[2] != "total_pay_order_gmv_include_coupon_for_roi2" ||
+		metrics[3] != "total_prepay_and_pay_order_roi2" ||
+		metrics[4] != "total_ecpm_for_roi2" {
 		t.Fatalf("metric fields = %#v", metrics)
 	}
 	for _, unsupported := range []string{"gpm", "live_pay_order_gpm", "total_live_pay_order_gpm"} {
@@ -298,6 +300,7 @@ func TestMaterialFromReportRowMapsLiveMaterialMetrics(t *testing.T) {
 			"material_name": "test",
 		},
 		Metrics: map[string]any{
+			"basic_stat_cost_for_roi2_v2":                 357.05,
 			"stat_cost_for_roi2":                          387.05,
 			"live_show_count_for_roi2_v2":                 float64(10000),
 			"live_watch_count_for_roi2_v2":                float64(98),
@@ -309,10 +312,58 @@ func TestMaterialFromReportRowMapsLiveMaterialMetrics(t *testing.T) {
 		},
 	}
 	material := materialFromReportRow(row, 1)
-	if material.MaterialID != "7654214461952425993" || material.Cost != 387.05 ||
+	if material.MaterialID != "7654214461952425993" ||
+		material.BaseCost != 357.05 || material.TotalCost != 387.05 ||
+		material.Cost != 357.05 ||
 		material.CTR != 0.98 || material.ConversionRate != 4.5 ||
+		material.OverallCTR != 0.98 || material.OverallConversionRate != 4.5 ||
+		material.BaseCTR != nil || material.BaseConversionRate != nil ||
 		material.PayOrderCount != 4 || material.PayOrderGMV != 120 ||
 		material.GPM != 12 {
+		t.Fatalf("material = %#v", material)
+	}
+}
+
+func TestMaterialFromReportRowDerivesRatesOnlyFromBasicCounts(t *testing.T) {
+	row := sdk.UniPromotionReportRow{
+		Dimensions: map[string]any{
+			"material_id": "7654214461952425993",
+		},
+		Metrics: map[string]any{
+			"basic_stat_cost_for_roi2_v2":          100.0,
+			"basic_live_show_count_for_roi2_v2":    1000,
+			"basic_live_watch_count_for_roi2_v2":   80,
+			"basic_total_pay_order_count_for_roi2": 8,
+			"stat_cost_for_roi2":                   150.0,
+			"live_cvr_rate_for_roi2_v2":            9.9,
+			"live_convert_rate_for_roi2_v2":        19.9,
+		},
+	}
+	material := materialFromReportRow(row, 1)
+	if material.BaseCTR == nil || material.BaseConversionRate == nil ||
+		math.Abs(*material.BaseCTR-8) > 1e-9 ||
+		math.Abs(*material.BaseConversionRate-10) > 1e-9 ||
+		material.OverallCTR != 9.9 || material.OverallConversionRate != 19.9 {
+		t.Fatalf("material = %#v", material)
+	}
+}
+
+func TestMaterialFromReportRowPrefersOfficialBasicRateFields(t *testing.T) {
+	row := sdk.UniPromotionReportRow{
+		Dimensions: map[string]any{
+			"material_id": "7654214461952425993",
+		},
+		Metrics: map[string]any{
+			"basic_stat_cost_for_roi2_v2":         100.0,
+			"basic_live_show_count_for_roi2_v2":   999,
+			"basic_live_watch_count_for_roi2_v2":  1,
+			"basic_live_cvr_rate_for_roi2_v2":     6.75,
+			"basic_live_convert_rate_for_roi2_v2": 11.25,
+		},
+	}
+	material := materialFromReportRow(row, 1)
+	if material.BaseCTR == nil || material.BaseConversionRate == nil ||
+		*material.BaseCTR != 6.75 || *material.BaseConversionRate != 11.25 {
 		t.Fatalf("material = %#v", material)
 	}
 }

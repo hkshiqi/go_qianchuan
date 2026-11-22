@@ -539,7 +539,7 @@ func (t *Tools) planMaterials(ctx context.Context, args map[string]any) (any, er
 	result["account"] = t.account(account)
 	result["ad_id"] = formatUintID(adID)
 	result["window"] = map[string]string{"start_date": startDate, "end_date": endDate}
-	result["rule"] = "消耗最高的前3素材永久保留；替换仅允许非前3素材"
+	result["rule"] = "按接口消耗排序；metric_basis 标明基础/整体口径；最高的前3素材永久保留，替换仅允许非前3素材"
 	result["warnings"] = warnings
 	return result, nil
 }
@@ -636,10 +636,10 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		materials = append(materials, materialFromReportRow(row, index+1))
 	}
 	sort.SliceStable(materials, func(i, j int) bool {
-		if materials[i].Cost == materials[j].Cost {
+		if materials[i].BaseCost == materials[j].BaseCost {
 			return materials[i].MaterialID > materials[j].MaterialID
 		}
-		return materials[i].Cost > materials[j].Cost
+		return materials[i].BaseCost > materials[j].BaseCost
 	})
 	for index := range materials {
 		materials[index].CostRank = index + 1
@@ -657,7 +657,13 @@ func (t *Tools) materialReport(ctx context.Context, args map[string]any) (any, e
 		"dimensions":     dimensionFields,
 		"metrics":        metricFields,
 		"source":         "qianchuan report uni_promotion data",
-		"write_guard":    "素材库只读；本工具不会上传或创建素材",
+		"metric_basis": map[string]string{
+			"cost":            "basic_stat_cost_for_roi2_v2（基础消耗）",
+			"total_cost":      "stat_cost_for_roi2（整体消耗/综合成本）",
+			"ctr":             "live_cvr_rate_for_roi2_v2（整体点击率）",
+			"conversion_rate": "live_convert_rate_for_roi2_v2（整体转化率）",
+		},
+		"write_guard": "素材库只读；本工具不会上传或创建素材",
 	}, nil
 }
 
@@ -3697,25 +3703,30 @@ func (t *Tools) fetchPlanMaterials(
 }
 
 func normalizeMaterial(raw sdk.UniPromotionMaterialInfo, rank int) MaterialMetrics {
+	metricBasis := "cost=plan_material_stat_cost（整体口径）; ctr/conversion_rate=overall; base metrics unavailable"
 	return MaterialMetrics{
-		MaterialID:      formatUintID(raw.MaterialId),
-		Title:           raw.MaterialName,
-		VideoID:         raw.VideoId,
-		AwemeItemID:     formatUintID(raw.AwemeItemId),
-		Status:          raw.MaterialStatus,
-		Cost:            raw.StatCost,
-		ShowCount:       raw.ShowCnt,
-		ClickCount:      raw.ClickCnt,
-		CTR:             raw.Ctr,
-		ConvertCount:    raw.ConvertCnt,
-		ConversionRate:  raw.ConversionRate,
-		PayOrderCount:   float64(raw.ConvertCnt),
-		PayOrderGMV:     raw.PayOrderAmount,
-		ROI:             raw.Roi2,
-		GPM:             raw.Gpm,
-		CostRank:        rank,
-		ProtectedTop3:   rank <= 3,
-		EligibleReplace: rank > 3,
+		MaterialID:            formatUintID(raw.MaterialId),
+		Title:                 raw.MaterialName,
+		VideoID:               raw.VideoId,
+		AwemeItemID:           formatUintID(raw.AwemeItemId),
+		Status:                raw.MaterialStatus,
+		TotalCost:             raw.StatCost,
+		Cost:                  raw.StatCost,
+		ShowCount:             raw.ShowCnt,
+		ClickCount:            raw.ClickCnt,
+		CTR:                   raw.Ctr,
+		OverallCTR:            raw.Ctr,
+		ConvertCount:          raw.ConvertCnt,
+		ConversionRate:        raw.ConversionRate,
+		OverallConversionRate: raw.ConversionRate,
+		PayOrderCount:         float64(raw.ConvertCnt),
+		PayOrderGMV:           raw.PayOrderAmount,
+		ROI:                   raw.Roi2,
+		GPM:                   raw.Gpm,
+		MetricBasis:           metricBasis,
+		CostRank:              rank,
+		ProtectedTop3:         rank <= 3,
+		EligibleReplace:       rank > 3,
 	}
 }
 
@@ -3761,6 +3772,7 @@ func reportDimensionFields(config sdk.UniPromotionReportTopicConfig) []string {
 
 func reportMetricFields(config sdk.UniPromotionReportTopicConfig) []string {
 	preferred := []string{
+		"basic_stat_cost_for_roi2_v2",
 		"stat_cost_for_roi2",
 		"stat_cost",
 		"live_show_count_for_roi2_v2",
@@ -3785,6 +3797,17 @@ func reportMetricFields(config sdk.UniPromotionReportTopicConfig) []string {
 	for _, field := range preferred {
 		if _, ok := available[field]; ok {
 			fields = append(fields, field)
+		}
+	}
+	for _, optional := range []string{
+		"basic_live_show_count_for_roi2_v2",
+		"basic_live_watch_count_for_roi2_v2",
+		"basic_live_cvr_rate_for_roi2_v2",
+		"basic_live_convert_rate_for_roi2_v2",
+		"basic_total_pay_order_count_for_roi2",
+	} {
+		if _, ok := available[optional]; ok {
+			fields = append(fields, optional)
 		}
 	}
 	return fields
@@ -3906,6 +3929,7 @@ func preferredReportFilterValue(field string, values []string) string {
 
 func reportCostMetric(fields []string) string {
 	for _, candidate := range []string{
+		"basic_stat_cost_for_roi2_v2",
 		"stat_cost_for_roi2",
 		"stat_cost",
 		"total_cost",
@@ -3924,7 +3948,12 @@ func materialFromReportRow(row sdk.UniPromotionReportRow, rank int) MaterialMetr
 	showCount := anyInt64(metrics, "live_show_count_for_roi2_v2", "show_cnt", "show_count", "product_show_count_for_roi2")
 	clickCount := anyInt64(metrics, "live_watch_count_for_roi2_v2", "click_cnt", "watch_count", "product_click_count_for_roi2")
 	convertCount := anyInt64(metrics, "total_pay_order_count_for_roi2", "convert_cnt", "conversion_count")
-	cost := anyFloat64(metrics, "stat_cost_for_roi2", "stat_cost", "cost")
+	baseCost, hasBaseCost := reportFloat64(metrics, "basic_stat_cost_for_roi2_v2")
+	totalCost := anyFloat64(metrics, "stat_cost_for_roi2", "stat_cost", "cost")
+	cost := totalCost
+	if hasBaseCost {
+		cost = baseCost
+	}
 	gmv := anyFloat64(
 		metrics,
 		"total_pay_order_gmv_for_roi2",
@@ -3932,7 +3961,12 @@ func materialFromReportRow(row sdk.UniPromotionReportRow, rank int) MaterialMetr
 		"pay_order_gmv",
 	)
 	ctr := anyFloat64(metrics, "live_cvr_rate_for_roi2_v2", "ctr", "click_rate")
-	conversionRate := anyFloat64(metrics, "live_convert_rate_for_roi2_v2", "conversion_rate", "convert_rate")
+	conversionRate := anyFloat64(
+		metrics,
+		"live_convert_rate_for_roi2_v2",
+		"conversion_rate",
+		"convert_rate",
+	)
 	if ctr == 0 && showCount > 0 {
 		ctr = float64(clickCount) / float64(showCount) * 100
 	}
@@ -3944,27 +3978,63 @@ func materialFromReportRow(row sdk.UniPromotionReportRow, rank int) MaterialMetr
 	if gpm == 0 && showCount > 0 {
 		gpm = gmv / float64(showCount) * 1000
 	}
-	return MaterialMetrics{
-		MaterialID:      materialID,
-		Title:           anyString(dimensions, "roi2_material_video_name", "material_name", "title", "video_title"),
-		VideoID:         anyString(dimensions, "video_id"),
-		AwemeItemID:     anyID(dimensions, "aweme_item_id"),
-		Status:          anyString(dimensions, "roi2_material_status", "material_status"),
-		Cost:            cost,
-		ShowCount:       showCount,
-		ClickCount:      clickCount,
-		CTR:             ctr,
-		ConvertCount:    convertCount,
-		ConversionRate:  conversionRate,
-		PayOrderCount:   float64(convertCount),
-		PayOrderGMV:     gmv,
-		ROI:             roi,
-		GPM:             gpm,
-		CostRank:        rank,
-		ProtectedTop3:   rank <= 3,
-		EligibleReplace: rank > 3,
-		MetricSource:    "qianchuan_report_uni_promotion",
+	baseCTR, baseConversionRate := basicMaterialRates(metrics)
+	metricBasis := "cost=basic_stat_cost; ctr/conversion_rate=overall; base_ctr/base_conversion_rate unavailable"
+	if baseCTR != nil || baseConversionRate != nil {
+		metricBasis = "cost=basic_stat_cost; ctr/conversion_rate=overall; base_ctr/base_conversion_rate from basic counts"
 	}
+	return MaterialMetrics{
+		MaterialID:            materialID,
+		Title:                 anyString(dimensions, "roi2_material_video_name", "material_name", "title", "video_title"),
+		VideoID:               anyString(dimensions, "video_id"),
+		AwemeItemID:           anyID(dimensions, "aweme_item_id"),
+		Status:                anyString(dimensions, "roi2_material_status", "material_status"),
+		BaseCost:              baseCost,
+		TotalCost:             totalCost,
+		Cost:                  cost,
+		ShowCount:             showCount,
+		ClickCount:            clickCount,
+		CTR:                   ctr,
+		OverallCTR:            ctr,
+		ConvertCount:          convertCount,
+		ConversionRate:        conversionRate,
+		OverallConversionRate: conversionRate,
+		BaseCTR:               baseCTR,
+		BaseConversionRate:    baseConversionRate,
+		PayOrderCount:         float64(convertCount),
+		PayOrderGMV:           gmv,
+		ROI:                   roi,
+		GPM:                   gpm,
+		CostRank:              rank,
+		ProtectedTop3:         rank <= 3,
+		EligibleReplace:       rank > 3,
+		MetricSource:          "qianchuan_report_uni_promotion",
+		MetricBasis:           metricBasis,
+	}
+}
+
+func basicMaterialRates(metrics map[string]any) (*float64, *float64) {
+	var baseCTR *float64
+	if value, ok := reportFloat64(metrics, "basic_live_cvr_rate_for_roi2_v2"); ok {
+		baseCTR = floatPointer(value)
+	} else {
+		showCount, hasShowCount := reportInt64(metrics, "basic_live_show_count_for_roi2_v2")
+		clickCount, hasClickCount := reportInt64(metrics, "basic_live_watch_count_for_roi2_v2")
+		if hasShowCount && hasClickCount && showCount > 0 {
+			baseCTR = floatPointer(float64(clickCount) / float64(showCount) * 100)
+		}
+	}
+	var baseConversionRate *float64
+	if value, ok := reportFloat64(metrics, "basic_live_convert_rate_for_roi2_v2"); ok {
+		baseConversionRate = floatPointer(value)
+	} else {
+		clickCount, hasClickCount := reportInt64(metrics, "basic_live_watch_count_for_roi2_v2")
+		convertCount, hasConvertCount := reportInt64(metrics, "basic_total_pay_order_count_for_roi2")
+		if hasClickCount && hasConvertCount && clickCount > 0 {
+			baseConversionRate = floatPointer(float64(convertCount) / float64(clickCount) * 100)
+		}
+	}
+	return baseCTR, baseConversionRate
 }
 
 func containsString(values []string, target string) bool {
@@ -4027,46 +4097,56 @@ func anyString(values map[string]any, keys ...string) string {
 }
 
 func anyFloat64(values map[string]any, keys ...string) float64 {
+	value, _ := reportFloat64(values, keys...)
+	return value
+}
+
+func reportFloat64(values map[string]any, keys ...string) (float64, bool) {
 	value := anyValue(values, keys...)
 	switch typed := value.(type) {
 	case float64:
-		return typed
+		return typed, true
 	case float32:
-		return float64(typed)
+		return float64(typed), true
 	case int:
-		return float64(typed)
+		return float64(typed), true
 	case int64:
-		return float64(typed)
+		return float64(typed), true
 	case json.Number:
-		parsed, _ := typed.Float64()
-		return parsed
+		parsed, err := typed.Float64()
+		return parsed, err == nil
 	case uint64:
-		return float64(typed)
+		return float64(typed), true
 	case string:
-		parsed, _ := strconv.ParseFloat(typed, 64)
-		return parsed
+		parsed, err := strconv.ParseFloat(typed, 64)
+		return parsed, err == nil
 	default:
-		return 0
+		return 0, false
 	}
 }
 
 func anyInt64(values map[string]any, keys ...string) int64 {
+	value, _ := reportInt64(values, keys...)
+	return value
+}
+
+func reportInt64(values map[string]any, keys ...string) (int64, bool) {
 	value := anyValue(values, keys...)
 	switch typed := value.(type) {
 	case int64:
-		return typed
+		return typed, true
 	case int:
-		return int64(typed)
+		return int64(typed), true
 	case float64:
-		return int64(typed)
+		return int64(typed), true
 	case json.Number:
-		parsed, _ := typed.Int64()
-		return parsed
+		parsed, err := typed.Int64()
+		return parsed, err == nil
 	case string:
-		parsed, _ := strconv.ParseInt(typed, 10, 64)
-		return parsed
+		parsed, err := strconv.ParseInt(typed, 10, 64)
+		return parsed, err == nil
 	default:
-		return 0
+		return 0, false
 	}
 }
 
@@ -4333,6 +4413,10 @@ func almostEqual(actual, expected, tolerance float64) bool {
 }
 
 func boolPointer(value bool) *bool {
+	return &value
+}
+
+func floatPointer(value float64) *float64 {
 	return &value
 }
 

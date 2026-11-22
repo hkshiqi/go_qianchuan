@@ -242,7 +242,7 @@ func availableTools() []tool {
 		{
 			Name:        "qianchuan_get_plan_materials",
 			Title:       "查询计划素材",
-			Description: "读取计划素材及全部指标，服务端按消耗排名并锁定前3名。",
+			Description: "读取计划素材及指标，按接口消耗排名并锁定前3名；该接口为基础消耗不可用时返回整体口径，具体以 metric_basis 为准。",
 			InputSchema: objectSchema(map[string]any{
 				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"ad_id":      stringSchema("计划 ID"),
@@ -254,7 +254,7 @@ func availableTools() []tool {
 		{
 			Name:        "qianchuan_material_report",
 			Title:       "素材库效果报表",
-			Description: "读取账户素材库效果数据，返回消耗、点击率、转化率、GPM、ROI，并标记消耗前3素材。",
+			Description: "读取素材库效果数据并按基础消耗标记前3；返回基础消耗、整体消耗、整体点击率、整体转化率、GPM、ROI，基础点击/转化仅在官方提供时返回。",
 			InputSchema: objectSchema(map[string]any{
 				"account_id": stringSchema("本租户内的广告账户 ID；多账户时必填"),
 				"start_date": stringSchema("开始日期 YYYY-MM-DD；默认今天"),

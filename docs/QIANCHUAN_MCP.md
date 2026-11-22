@@ -17,11 +17,13 @@
 | `qianchuan_list_accounts` | 当前 Key 可切换的投放账户与逐账户授权状态 |
 | `qianchuan_list_plans` | 计划列表、消耗与成交 |
 | `qianchuan_get_plan` | 单计划详情 |
-| `qianchuan_get_plan_materials` | 素材指标与当日消耗前三保护名单 |
-| `qianchuan_material_report` | 素材报表、点击率、转化率与 GPM |
-| `qianchuan_live_overview` | 当日直播间投放概览 |
+| `qianchuan_get_plan_materials` | 计划素材指标与当日消耗前三保护名单；`metric_basis` 标明口径 |
+| `qianchuan_material_report` | 素材库报表；按基础消耗排序，同时返回整体消耗、整体点击率/转化率 |
+| `qianchuan_live_overview` | 当前直播间当日投放概览 |
 
-素材删除保护由服务端执行：拉取全部分页，按服务端当日 `stat_cost_for_roi2` 显式降序排序，锁定前三名；有消耗素材所在状态为 `ALL`，避免暂停素材漏保护。删除接口无法通过客户端日期缩小保护窗口，也无法仅凭标题删除。
+素材库报表的 `base_cost` 和默认 `cost` 使用官方 `basic_stat_cost_for_roi2_v2`（基础消耗，不包含一键起量和视频追投）；`total_cost` 使用 `stat_cost_for_roi2`（整体消耗/综合成本）。官方素材库配置目前只提供基础消耗，没有基础点击率、基础转化率，因此 `ctr`、`conversion_rate` 明确为整体口径；`base_ctr`、`base_conversion_rate` 仅在官方返回基础计数或基础比率时出现。
+
+素材删除保护由服务端执行：素材库报表拉取全部分页后按基础消耗显式降序排序，锁定前三名；有消耗素材所在状态为 `ALL`，避免暂停素材漏保护。删除接口无法通过客户端日期缩小保护窗口，也无法仅凭标题删除。
 
 ## MCP 客户端配置
 

@@ -113,12 +113,20 @@ key="$(tr -d '\r\n' <"$KEY_FILE")"
 rpc "$work/initialize.json" 1 initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"qianchuan-readonly-selfcheck","version":"1.0.0"}}'
 rpc "$work/tools-list.json" 2 tools/list '{}'
 
-status_json="$(call_tool qianchuan_get_status "{\"account_id\":\"$ACCOUNT_ID\"}")"
-accounts_json="$(call_tool qianchuan_list_accounts '{}')"
-plan_json="$(call_tool qianchuan_get_plan "{\"account_id\":\"$ACCOUNT_ID\",\"ad_id\":\"$PLAN_ID\"}")"
-plan_materials_json="$(call_tool qianchuan_get_plan_materials "{\"account_id\":\"$ACCOUNT_ID\",\"ad_id\":\"$PLAN_ID\",\"start_date\":\"$DATE\",\"end_date\":\"$DATE\",\"page_size\":100}")"
 material_report_json="$(call_tool qianchuan_material_report "{\"account_id\":\"$ACCOUNT_ID\",\"start_date\":\"$DATE\",\"end_date\":\"$DATE\",\"page_size\":100}")"
-live_json_payload="$(call_tool qianchuan_live_overview "{\"account_id\":\"$ACCOUNT_ID\"}")"
+if [[ "${QIANCHUAN_MATERIAL_REPORT_ONLY:-false}" == "true" ]]; then
+  status_json=""
+  accounts_json=""
+  plan_json=""
+  plan_materials_json=""
+  live_json_payload=""
+else
+  status_json="$(call_tool qianchuan_get_status "{\"account_id\":\"$ACCOUNT_ID\"}")"
+  accounts_json="$(call_tool qianchuan_list_accounts '{}')"
+  plan_json="$(call_tool qianchuan_get_plan "{\"account_id\":\"$ACCOUNT_ID\",\"ad_id\":\"$PLAN_ID\"}")"
+  plan_materials_json="$(call_tool qianchuan_get_plan_materials "{\"account_id\":\"$ACCOUNT_ID\",\"ad_id\":\"$PLAN_ID\",\"start_date\":\"$DATE\",\"end_date\":\"$DATE\",\"page_size\":100}")"
+  live_json_payload="$(call_tool qianchuan_live_overview "{\"account_id\":\"$ACCOUNT_ID\"}")"
+fi
 if [[ "${QIANCHUAN_REQUIRE_PLAN_IN_LIST:-false}" == "true" ]]; then
   plans_json="$(call_tool qianchuan_list_plans "{\"account_id\":\"$ACCOUNT_ID\",\"start_time\":\"$DATE 00:00:00\",\"end_time\":\"$DATE 23:59:59\",\"page_size\":100}")"
 else
@@ -236,46 +244,52 @@ for name in required_read_tools:
         f"tools/list: {name} is not marked read-only",
     )
 
-status = rpc_result(load(status_path), "qianchuan_get_status")
-require(status.get("authenticated") is True, f"status: account is not authenticated: {status}")
-require(status.get("read_enabled") is True, f"status: reads are disabled: {status}")
-require(status.get("write_enabled") is False, f"status: writes are unexpectedly enabled: {status}")
-require(status.get("advertiser_id") == account_id, f"status: advertiser_id={status.get('advertiser_id')!r}, want {account_id}")
-require(status.get("aweme_id") == aweme_id, f"status: aweme_id={status.get('aweme_id')!r}, want {aweme_id}")
-require(status.get("live_room_id") == live_room_id, f"status: live_room_id={status.get('live_room_id')!r}, want {live_room_id}")
-
-accounts = rpc_result(load(accounts_path), "qianchuan_list_accounts")
-matched = [item for item in accounts.get("accounts", []) if item.get("account_id") == account_id]
-require(len(matched) == 1, f"accounts: expected exactly one {account_id}, got matches={len(matched)}")
-matched_account = matched[0]
-require(matched_account.get("authenticated") is True, f"accounts: {account_id} is not authenticated")
-require(matched_account.get("aweme_id") == aweme_id, f"accounts: aweme_id={matched_account.get('aweme_id')!r}, want {aweme_id}")
-require(matched_account.get("live_room_id") == live_room_id, f"accounts: live_room_id={matched_account.get('live_room_id')!r}, want {live_room_id}")
-
-plans = rpc_result(load(plans_path), "qianchuan_list_plans")
-matched_plans = [item for item in plans.get("plans", []) if item.get("ad_id") == plan_id]
-if expect_plan_in_list == "true":
-    require(len(matched_plans) == 1, f"plans: expected exactly one {plan_id}, got matches={len(matched_plans)}")
-    plan_row = matched_plans[0]
+material_report_only = not status_path
+if material_report_only:
+    plan = {}
+    protected_top3 = []
+    plan_materials = {"material_count": 0}
 else:
-    require(len(matched_plans) <= 1, f"plans: duplicate plan {plan_id}")
+    status = rpc_result(load(status_path), "qianchuan_get_status")
+    require(status.get("authenticated") is True, f"status: account is not authenticated: {status}")
+    require(status.get("read_enabled") is True, f"status: reads are disabled: {status}")
+    require(status.get("write_enabled") is False, f"status: writes are unexpectedly enabled: {status}")
+    require(status.get("advertiser_id") == account_id, f"status: advertiser_id={status.get('advertiser_id')!r}, want {account_id}")
+    require(status.get("aweme_id") == aweme_id, f"status: aweme_id={status.get('aweme_id')!r}, want {aweme_id}")
+    require(status.get("live_room_id") == live_room_id, f"status: live_room_id={status.get('live_room_id')!r}, want {live_room_id}")
 
-plan = rpc_result(load(plan_path), "qianchuan_get_plan").get("plan") or {}
-require(str(plan.get("ad_id")) == plan_id, f"plan: ad_id={plan.get('ad_id')!r}, want {plan_id}")
-require(close(plan.get("budget"), expected_budget), f"plan: budget={plan.get('budget')!r}, want {expected_budget}")
-require(close(plan.get("roi2_goal"), expected_roi2_goal), f"plan: roi2_goal={plan.get('roi2_goal')!r}, want {expected_roi2_goal}")
-require(plan.get("delivery_setting", {}).get("budget") is not None, "plan: missing delivery_setting.budget")
+    accounts = rpc_result(load(accounts_path), "qianchuan_list_accounts")
+    matched = [item for item in accounts.get("accounts", []) if item.get("account_id") == account_id]
+    require(len(matched) == 1, f"accounts: expected exactly one {account_id}, got matches={len(matched)}")
+    matched_account = matched[0]
+    require(matched_account.get("authenticated") is True, f"accounts: {account_id} is not authenticated")
+    require(matched_account.get("aweme_id") == aweme_id, f"accounts: aweme_id={matched_account.get('aweme_id')!r}, want {aweme_id}")
+    require(matched_account.get("live_room_id") == live_room_id, f"accounts: live_room_id={matched_account.get('live_room_id')!r}, want {live_room_id}")
 
-plan_materials = rpc_result(load(plan_materials_path), "qianchuan_get_plan_materials")
-require(plan_materials.get("material_count", 0) > 0, f"plan materials: empty result: {plan_materials}")
-require(plan_materials.get("materials"), "plan materials: current page is empty")
-protected_top3 = plan_materials.get("protected_top3") or []
-if plan_materials.get("material_count", 0) >= 3:
-    require(len(protected_top3) == 3, f"plan materials: protected_top3 has {len(protected_top3)} items, want 3")
-for rank, material in enumerate(protected_top3, start=1):
-    require(material.get("cost_rank") == rank, f"plan materials: protected item {rank} has rank {material.get('cost_rank')}")
-    require(material.get("protected_top3") is True, f"plan materials: protected item {rank} is not flagged: {material}")
-    require(material.get("eligible_for_replacement") is False, f"plan materials: protected item {rank} is replaceable: {material}")
+    plans = rpc_result(load(plans_path), "qianchuan_list_plans")
+    matched_plans = [item for item in plans.get("plans", []) if item.get("ad_id") == plan_id]
+    if expect_plan_in_list == "true":
+        require(len(matched_plans) == 1, f"plans: expected exactly one {plan_id}, got matches={len(matched_plans)}")
+        plan_row = matched_plans[0]
+    else:
+        require(len(matched_plans) <= 1, f"plans: duplicate plan {plan_id}")
+
+    plan = rpc_result(load(plan_path), "qianchuan_get_plan").get("plan") or {}
+    require(str(plan.get("ad_id")) == plan_id, f"plan: ad_id={plan.get('ad_id')!r}, want {plan_id}")
+    require(close(plan.get("budget"), expected_budget), f"plan: budget={plan.get('budget')!r}, want {expected_budget}")
+    require(close(plan.get("roi2_goal"), expected_roi2_goal), f"plan: roi2_goal={plan.get('roi2_goal')!r}, want {expected_roi2_goal}")
+    require(plan.get("delivery_setting", {}).get("budget") is not None, "plan: missing delivery_setting.budget")
+
+    plan_materials = rpc_result(load(plan_materials_path), "qianchuan_get_plan_materials")
+    require(plan_materials.get("material_count", 0) > 0, f"plan materials: empty result: {plan_materials}")
+    require(plan_materials.get("materials"), "plan materials: current page is empty")
+    protected_top3 = plan_materials.get("protected_top3") or []
+    if plan_materials.get("material_count", 0) >= 3:
+        require(len(protected_top3) == 3, f"plan materials: protected_top3 has {len(protected_top3)} items, want 3")
+    for rank, material in enumerate(protected_top3, start=1):
+        require(material.get("cost_rank") == rank, f"plan materials: protected item {rank} has rank {material.get('cost_rank')}")
+        require(material.get("protected_top3") is True, f"plan materials: protected item {rank} is not flagged: {material}")
+        require(material.get("eligible_for_replacement") is False, f"plan materials: protected item {rank} is replaceable: {material}")
 
 material_report = rpc_result(load(material_report_path), "qianchuan_material_report")
 require(material_report.get("data_topic") == "OVERALL_ROI_LIVE_MATERIAL_VIDEO", f"material report: unexpected data_topic {material_report.get('data_topic')!r}")
@@ -283,34 +297,56 @@ require(material_report.get("materials"), f"material report: empty result: {mate
 report_materials = material_report.get("materials") or []
 report_anchor_id = material_report.get("anchor_id")
 require(report_anchor_id, f"material report: missing resolved anchor_id: {material_report}")
-require(
-    str(plan.get("aweme_id")) == str(report_anchor_id),
-    f"plan: aweme_id={plan.get('aweme_id')!r}, want resolved anchor_id {report_anchor_id!r} for show id {aweme_id}",
-)
-if expect_plan_in_list == "true":
+if not material_report_only:
     require(
-        str(plan_row.get("aweme_id")) == str(report_anchor_id),
-        f"plans: aweme_id={plan_row.get('aweme_id')!r}, want resolved anchor_id {report_anchor_id!r}",
+        str(plan.get("aweme_id")) == str(report_anchor_id),
+        f"plan: aweme_id={plan.get('aweme_id')!r}, want resolved anchor_id {report_anchor_id!r} for show id {aweme_id}",
     )
+    if expect_plan_in_list == "true":
+        require(
+            str(plan_row.get("aweme_id")) == str(report_anchor_id),
+            f"plans: aweme_id={plan_row.get('aweme_id')!r}, want resolved anchor_id {report_anchor_id!r}",
+        )
 for material in report_materials:
     require(material.get("material_id"), f"material report: material without material_id: {material}")
     require(material.get("metric_source") == "qianchuan_report_uni_promotion", f"material report: unexpected metric source: {material}")
+    require(
+        material.get("base_cost") is not None and material.get("total_cost") is not None,
+        f"material report: missing base_cost/total_cost: {material}",
+    )
+    require(
+        close(material.get("cost"), material.get("base_cost")),
+        f"material report: cost must default to base_cost: {material}",
+    )
+    require(
+        "basic_stat_cost" in str(material.get("metric_basis") or ""),
+        f"material report: missing metric basis: {material}",
+    )
+require(
+    all(
+        report_materials[index].get("base_cost") >= report_materials[index + 1].get("base_cost")
+        for index in range(len(report_materials) - 1)
+    ),
+    "material report: rows are not sorted by base_cost desc",
+)
 
-live = rpc_result(load(live_path), "qianchuan_live_overview")
-require(live.get("live_room_id") == live_room_id, f"live overview: live_room_id={live.get('live_room_id')!r}, want {live_room_id}")
-require(live.get("account", {}).get("advertiser_id") == account_id, f"live overview: advertiser mismatch: {live.get('account')}")
-require("live" in live, "live overview: missing live payload")
-if live.get("live"):
-    print("OK live overview returned current-room metrics")
-elif live.get("live") == {} and live.get("warnings"):
-    print("OK live overview API succeeded; current room is offline or metrics are not yet populated")
-else:
-    raise SystemExit(f"live overview: unexpected live payload: {live.get('live')!r}")
+if not material_report_only:
+    live = rpc_result(load(live_path), "qianchuan_live_overview")
+    require(live.get("live_room_id") == live_room_id, f"live overview: live_room_id={live.get('live_room_id')!r}, want {live_room_id}")
+    require(live.get("account", {}).get("advertiser_id") == account_id, f"live overview: advertiser mismatch: {live.get('account')}")
+    require("live" in live, "live overview: missing live payload")
+    if live.get("live"):
+        print("OK live overview returned current-room metrics")
+    elif live.get("live") == {} and live.get("warnings"):
+        print("OK live overview API succeeded; current room is offline or metrics are not yet populated")
+    else:
+        raise SystemExit(f"live overview: unexpected live payload: {live.get('live')!r}")
 
 print(f"OK initialize + {len(required_read_tools)} read-only tools")
-print(f"OK account {account_id} / aweme {aweme_id} / room {live_room_id}; writes disabled")
-print(f"OK plan {plan_id}: budget={plan.get('budget')}, roi2_goal={plan.get('roi2_goal')}, anchor={report_anchor_id}")
-print(f"OK plan materials={plan_materials.get('material_count')}; protected_top3={len(protected_top3)}")
+if not material_report_only:
+    print(f"OK account {account_id} / aweme {aweme_id} / room {live_room_id}; writes disabled")
+    print(f"OK plan {plan_id}: budget={plan.get('budget')}, roi2_goal={plan.get('roi2_goal')}, anchor={report_anchor_id}")
+    print(f"OK plan materials={plan_materials.get('material_count')}; protected_top3={len(protected_top3)}")
 print(f"OK material report rows={len(report_materials)}")
 PY
 
